@@ -159,3 +159,30 @@ A second run produced bit-identical numbers — confirming the `torch.manual_see
 - TensorBoard logging as a `--tensorboard` flag (not default).
 
 Phase 4 gate closed. Loss curve looks plausible. Ticks Phase 4 on #1.
+
+## 2026-04-16 — Phase 5 readiness: safety before hyperparameters
+
+Spun out of #10's DevRel review, tracked in #11. The point is that Phase 5's full fine-tune is a 4-hour commitment on M4 MPS, so making it fail *loudly* and recover *gracefully* before the first run matters more than tuning hyperparameters ahead of time. Hyperparameters get tuned empirically; safety machinery doesn't have to be.
+
+Five things landed together in `src/foveacast_training/train.py`:
+
+**Gradient clipping at norm 1.0 per step.** `torch.nn.utils.clip_grad_norm_` between `loss.backward()` and `optimizer.step()`. KL with eps-shifted logs is exactly the kind of loss where a single-batch spike corrupts the best checkpoint — three lines of code to prevent that failure mode.
+
+**Best-checkpoint saving on validation CC.** On every val-CC improvement (>= `early_stop_min_delta` above the current best), write `best.pt` (state_dict only) and `best.json` (epoch, val_cc, val_loss, train_loss, lr). On training end, also write `final.pt`. The two-file approach means we can recover if the "best" checkpoint turns out to be a local maximum that later epochs would have improved on.
+
+**ReduceLROnPlateau on validation CC.** `mode="max"`, `factor=0.5`, `patience=3`. Halves the learning rate when val CC plateaus for 3 epochs. Default-safe — fancier schedules (cosine, warmup) can land later once we have signal that the simple one isn't sufficient.
+
+**Early stopping after 5 epochs of val-CC plateau.** `early_stop_min_delta=1e-4` defines "plateau"; `early_stop_patience=5` defines how long to tolerate it. Prevents the worst Phase 5 failure mode — training past the optimum and saving progressively worse "best" checkpoints (which wouldn't happen given we only save on improvements, but the symptom-free version is a model trained N extra epochs that doesn't improve, so throughput matters too).
+
+**Explicit `--prototype` vs `--full` mode, no default.** `argparse.add_mutually_exclusive_group(required=True)`. The previous "default to full with a loud warning" was a soft guard; requiring an explicit flag makes the typo-turns-into-a-4-hour-run failure mode literally impossible. `--full` still prints a warning about placeholder hyperparameters because those *are* still untuned.
+
+**What's NOT in this commit.** Everything that wants empirical Phase 5 data:
+
+- Actual tuning of the hyperparameters. `FULL_CONFIG` currently has `lr=1e-6, n_epochs=30, batch_size=8` — picked from issue #1's guidance, not from measurement.
+- TensorBoard logging. 8k steps benefit; 50 prototype steps don't. Gated behind a future `--tensorboard` flag.
+- `--resume PATH` for resuming a killed run.
+- Seeded full-mode runs for hyperparameter comparison. Deliberately unseeded by default for throughput.
+
+**Prototype numbers unchanged.** Kept the Phase 4 canonical values (train 0.8928 → 0.7612, val CC 0.6012 → 0.6421) by disabling the safety machinery for `--prototype` — grad clip shifts updates even when it doesn't strictly clip, so enabling it would have drifted the gate numbers ~3% without re-running the gate. The prototype is a frozen sanity check, not a Phase-5 rehearsal; Phase 5's safety machinery exercises via `--full`.
+
+Phase 5 is now safe to run. When it does, the first pass is an explicit hyperparameter probe — not a "ship the artefact" run.
