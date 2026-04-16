@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Training artefacts — every one of these can be regenerated from the
+# training script and the dataset, so none of them belong in git.
+# Checkpoints and weights files especially: a repo bloats fast if you
+# accidentally commit one of these, and the provenance is better
+# tracked by the release artefact attached to a GitHub Release than
+# by the bytes floating in the repo.
+runs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+*.hdf5
+*.pb
+
+# Dataset — UEyes is 12.9 GB zipped. Users fetch it themselves per
+# data/README.md. The repo should be clonable in seconds.
+data/ueyes/
+data/*.zip
+data/*.tar.gz
+data/UEyes_dataset/
+
+# TensorBoard / wandb
+events.out.tfevents.*
+wandb/
+lightning_logs/
+
+# Platform
+*.log

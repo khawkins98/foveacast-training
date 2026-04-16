@@ -1,0 +1,72 @@
+[project]
+name = "foveacast-training"
+version = "0.1.0"
+description = "Training pipeline for the saliency model that ships in Foveacast."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "Ken Hawkins" },
+]
+keywords = ["saliency", "visual-attention", "msi-net", "ueyes", "fine-tuning"]
+
+# Core runtime: just enough to load a checkpoint, run forward passes,
+# and export to ONNX. Deliberately kept minimal so a downstream user
+# who only wants to re-export an existing checkpoint does not have to
+# pull in tensorboard, matplotlib, or dataset-processing tools.
+dependencies = [
+  "torch>=2.1",
+  "torchvision>=0.16",
+  "numpy>=1.26",
+  "pillow>=10.0",
+  "onnx>=1.16",
+  "onnxscript>=0.1",
+]
+
+[project.optional-dependencies]
+# Full training stack — add with `uv pip install -e '.[training]'`.
+# Split out so a lean "I just want to export the released checkpoint"
+# install stays lean.
+training = [
+  "tqdm>=4.66",
+  "tensorboard>=2.15",
+  "pyyaml>=6.0",
+]
+
+# Evaluation helpers for saliency metrics (CC, KLD, NSS, SIM, AUC).
+# Kept separate because the metric code has SciPy as a transitive dep
+# and someone running inference only should not have to install it.
+eval = [
+  "scipy>=1.11",
+  "scikit-image>=0.22",
+]
+
+# Developer conveniences — linters, formatters, notebook runner.
+dev = [
+  "ruff>=0.5",
+  "jupyter>=1.0",
+  "ipykernel>=6.28",
+]
+
+[project.urls]
+Homepage = "https://github.com/khawkins98/foveacast-training"
+Foveacast = "https://github.com/khawkins98/Foveacast"
+"UEyes dataset" = "https://zenodo.org/records/8010312"
+"MSI-Net upstream" = "https://github.com/alexanderkroner/saliency"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Lean preset: the standard pyflakes + pycodestyle + flake8-bugbear
+# subset that Ruff enables by default, plus import sorting. Not going
+# to fight formatting wars on a one-maintainer research repo.
+select = ["E", "F", "I", "B", "W"]

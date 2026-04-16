@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this training pipeline or a model trained with it, please cite Foveacast and credit the upstream datasets and architectures."
+title: "foveacast-training"
+abstract: >
+  Training pipeline for saliency models shipped in Foveacast.
+  Fine-tunes MSI-Net (Kroner et al., 2020) on the UEyes dataset
+  (Jiang et al., 2023) to produce a UI-content-aware attention
+  prediction model.
+authors:
+  - family-names: Hawkins
+    given-names: Ken
+repository-code: "https://github.com/khawkins98/foveacast-training"
+license: MIT
+type: software
+references:
+  - type: article
+    title: "Contextual Encoder-Decoder Network for Visual Saliency Prediction"
+    authors:
+      - family-names: Kroner
+        given-names: Alexander
+      - family-names: Senden
+        given-names: Mario
+      - family-names: Driessens
+        given-names: Kurt
+      - family-names: Goebel
+        given-names: Rainer
+    year: 2020
+    journal: "Neural Networks"
+    doi: "10.1016/j.neunet.2020.05.004"
+  - type: conference-paper
+    title: "UEyes: Understanding Visual Saliency across User Interface Types"
+    authors:
+      - family-names: Jiang
+        given-names: Yue
+      - family-names: Leiva
+        given-names: "Luis A."
+      - family-names: "Rezazadegan Tavakoli"
+        given-names: Hamed
+      - family-names: Houssel
+        given-names: "Paul R. B."
+      - family-names: Kylmälä
+        given-names: Julia
+      - family-names: Oulasvirta
+        given-names: Antti
+    year: 2023
+    conference:
+      name: "2023 CHI Conference on Human Factors in Computing Systems"
+    doi: "10.1145/3544548.3581096"
