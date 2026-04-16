@@ -167,9 +167,19 @@ No release has shipped yet. The pipeline lands phase by phase (see [issue #1](ht
 
    Explicit `--full` flag required — no default mode — so it's not possible to accidentally kick off a 4-hour fine-tune by forgetting `--prototype`. Runs the full 1,684-image train set for the epoch count in `FULL_CONFIG`, with gradient clipping, best-checkpoint saving (on validation CC), ReduceLROnPlateau, and early stopping all wired up. The safety machinery landed ahead of Phase 5 (see #11); the *hyperparameters* in `FULL_CONFIG` (learning rate 1e-6, 30 epochs, batch 8) are still placeholder until an empirical tuning run. The CLI prints a loud warning to that effect. Writes `runs/full-{timestamp}/{best.pt,final.pt,history.json,best.json}`.
 
-3. **Evaluate** `[later — Phase 6]`
+3. **Evaluate** `[code landed · comparison pending Phase 5]`
 
-   CC / KLD / NSS metrics on the held-out UEyes test split (108 images), plus qualitative overlays on Foveacast's four-screenshot benchmark set.
+   ```sh
+   # Evaluate a single checkpoint:
+   .venv/bin/python -m foveacast_training.eval --checkpoint runs/full-*/best.pt
+
+   # Compare fine-tuned vs stock SALICON-pretrained MSI-Net:
+   .venv/bin/python -m foveacast_training.eval \
+       --checkpoint runs/full-*/best.pt \
+       --compare weights/msinet_salicon.pt
+   ```
+
+   Computes CC (higher better), KLD (lower better), and NSS (higher better) over the held-out UEyes test split (108 images). Stock baseline on the test split, captured 2026-04-16: **CC=0.4934 ± 0.094, KLD=1.1682 ± 0.246, NSS=1.5776 ± 0.451**. Phase 5's gate is "fine-tuned beats stock on at least one metric"; Phase 6 closes when the comparison produces that signal. Phase 7's qualitative overlay against Foveacast's four-screenshot benchmark set is a separate step.
 
 4. **Export** `[later — Phase 8]`
 
