@@ -94,3 +94,27 @@ Worth recording in order because the debugging arc itself illustrates a pattern:
 - `tests/test_msinet_parity.py` — tolerance tightened from `atol=1e-3` to `atol=1e-5` once we knew the natural residual was ~1e-7.
 
 Phase 2 gate closed. Forward pass matches the reference. Ticks Phase 2 on #1.
+
+## 2026-04-16 — Phase 3 loader: the boring phase, mostly
+
+Phase 3 landed `src/foveacast_training/ueyes_dataset.py` plus 16 tests against the real unpacked deposit (tests skip cleanly when `data/ueyes/` is absent). This is the closest the project has come to "just write the code" — Phase 0 did the hard work of characterising the archive, Phase 1 resolved substrate, Phase 2 resolved the architecture itself. For the loader, almost every decision had a reasonable default waiting to be picked.
+
+Three choices worth documenting even though none of them felt load-bearing at the time:
+
+**Saliency variant: `heatmaps_3s`.** Continuous Gaussian-smoothed maps rather than binary `fixmaps_*`, at a 3-second aggregation window rather than 1s or 7s. The 3s choice approximates SALICON's ~5s aggregate window — the one MSI-Net's pretrained weights were fit against — so fine-tuning doesn't ask the model to shift duration semantics on top of the domain shift from natural scenes to UI. If Phase 6 eval shows the variant is a load-bearing choice (e.g. 7s gives noticeably different numbers), the `saliency_variant` constructor argument is already there to swap. Made configurable up front for cheap optionality later.
+
+**Validation split: stratified 10% carve from upstream Train.** 1,684 train / 188 val / 108 test, with val pinned by seed=42 (fresh `np.random.default_rng(seed)`, not the global NumPy state). Exactly 47 val images per category × 4 categories. The upstream deposit ships only a train/test split, so val is our construction. I considered a category-and-block stratification (use `Block` as an additional axis) but the Block column is a mess (mixed plain integers and Excel scientific notation — see below) and no paper I'm aware of reports the block assignment as a fine-tuning-relevant covariate. Single-axis category stratification is enough.
+
+**Preprocessing: PIL BICUBIC + constant pad.** Kroner's reference uses area interpolation for downscale, bicubic for upscale — a small parity boost for SALICON training. For a UEyes fine-tune we don't actually need preprocessing parity with Kroner's SALICON run; we need train-time and eval-time consistency *within this repo*. Single-method BICUBIC end-to-end keeps the loader small and dodges PIL-vs-TF interpolation differences. If Phase 6 ends up comparing fine-tuned outputs against stock SALICON MSI-Net, the eval path gets its own reference-preprocessor.
+
+**The `Block` column quirk.** The upstream CSV has most `Block` values as plain integer strings (`"0"`, `"23"`) and a handful as Excel scientific notation (`"0,00E+00"`). Opening the file in Excel and re-saving almost certainly did it. First pass of the loader parsed `Block` as `int()` and exploded. The fix is trivially to keep `Block` as a raw string — nothing in the loader uses it — but it's the kind of thing worth writing down because someone six months from now will read the column, assume it parses cleanly, and re-introduce the same bug.
+
+**What's deliberately not in this module.**
+
+- No data augmentation. 1,980 images and a close pretrained prior means augmentation adds noise without a training-size payoff.
+- No caching of preprocessed tensors. Single-pass PIL decode + numpy resize + numpy pad is fast enough; PyTorch's `DataLoader` with workers handles the per-epoch cost. Revisit if Phase 5 turns out to be I/O bound.
+- No collate_fn customisation. Default collation is fine for same-shape tensors.
+
+**What Phase 4 will need from this module.** `UEyesDataset(root, split, ...)` and `DataLoader(ds, batch_size=..., shuffle=True, num_workers=...)`. That's it. The prototype training loop and the full fine-tune both call the same Dataset; the only difference is the subset and epoch count they iterate over.
+
+Phase 3 gate closed. `(image, saliency)` tensors of correct shape, splits sum to 1,980, stratified, reproducible. Ticks Phase 3 on #1.

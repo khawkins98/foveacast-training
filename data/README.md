@@ -98,15 +98,17 @@ Columns: `Image Name;Category;Block;Train/Test`. Header line present. CRLF line 
 
 The upstream `UEyes_dataset/README.md` refers to a file called `info.csv`. The file that actually ships in the deposit is `image_types.csv` — same columns, just a different name. Not a problem, but the loader code should key on `image_types.csv` and a comment should note the rename so future readers don't wonder.
 
-### Choices deferred to Phase 3 (dataset loader)
+### Choices resolved in Phase 3
 
-The multi-variant ground truth (`fixmaps` vs `heatmaps` vs `overlay_heatmaps` × `1s` vs `3s` vs `7s`) means Phase 3 has to pick:
+Phase 3 closed the three open choices from Phase 0. Decisions and one-line rationale captured here; the long form lives in [`LEARNINGS.md`](../LEARNINGS.md) 2026-04-16 Phase 3.
 
-- **Which saliency-map variant is the training target?** `heatmaps_*` (Gaussian-smoothed continuous maps) is the conventional choice for saliency-prediction fine-tuning; `fixmaps_*` are binary. `overlay_*` are for human inspection, not training.
-- **Which duration?** 1s = first-glance attention, 3s = early exploration, 7s = full viewing. Kroner's MSI-Net was trained on SALICON, whose ground truth is aggregated over roughly 5s of mouse-as-gaze data per image. `heatmaps_3s` is probably the closest analogue; worth confirming once Phase 1's substrate decision lands.
-- **Validation-set strategy.** Stratified hold-out from train, seed-pinned.
+- **Training saliency target: `heatmaps_3s`.** Gaussian-smoothed continuous maps at a 3-second aggregate viewing window. Continuous signal gives gradients to fine-tune against (vs binary `fixmaps_*`); 3s is the closest analogue to SALICON's ~5s aggregation, which is what MSI-Net's pretrained weights were fit against. `overlay_heatmaps_*` stays out of scope for training. The `saliency_variant` argument on `UEyesDataset` lets Phase 6 compare variants without code changes.
+- **Validation set: stratified 10% hold-out from upstream Train, fixed seed 42.** 1,872 upstream Train → 1,684 train + 188 val (47 per category × 4). Upstream Test (108) stays untouched. Fresh `np.random.default_rng(seed)` per carve — no dependence on global NumPy state.
+- **Preprocessing: aspect-preserving PIL BICUBIC resize + constant pad to (240, 320).** Stimuli padded with 126 (mid-grey, Kroner's convention), saliency maps padded with 0. Stimulus tensors emerge as `(3, 240, 320)` float32 RGB in `[0, 255]`; saliency tensors as `(1, 240, 320)` float32 in `[0, 1]`.
 
-These are logged here rather than chosen now — the issue #1 gate for Phase 0 is "know the shape of inputs and ground truths," not "commit to every loader decision."
+### Upstream CSV quirk
+
+The `Block` column in `image_types.csv` is mixed: most rows store the integer plainly (`"0"`, `"23"`), but a handful are in Excel scientific notation (`"0,00E+00"`) — the file was clearly opened in Excel at some point. The loader keeps `Block` as a raw string; nothing downstream uses it. Recorded here so the next contributor to parse it as `int()` isn't surprised.
 
 ### Disk usage note
 
