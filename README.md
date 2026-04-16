@@ -43,7 +43,7 @@ foveacast-training/
 ├── src/foveacast_training/
 │   ├── __init__.py
 │   ├── msinet.py          # PyTorch port of MSI-Net (Phase 2, landed)
-│   ├── ueyes_dataset.py   # PyTorch Dataset wrapping UEyes (Phase 3)
+│   ├── ueyes_dataset.py   # PyTorch Dataset wrapping UEyes (Phase 3, landed)
 │   ├── train.py           # training loop (Phase 4/5)
 │   ├── eval.py            # saliency metrics (CC, KLD, NSS) (Phase 6)
 │   └── export_onnx.py     # produce the release artefact (Phase 8)
@@ -52,7 +52,8 @@ foveacast-training/
 │   └── import_msinet_weights.py  # one-time TF→PyTorch weight port
 │
 ├── tests/
-│   └── test_msinet_parity.py     # PyTorch-vs-TF numerical parity gate
+│   ├── test_msinet_parity.py     # PyTorch-vs-TF numerical parity gate
+│   └── test_ueyes_dataset.py     # UEyes Dataset shape + split invariants
 │
 ├── weights/               # gitignored; imported pretrained weights (.pt)
 └── runs/                  # gitignored; checkpoints + TensorBoard logs (Phase 4+)
@@ -121,13 +122,21 @@ After the import, the TensorFlow install is no longer needed for anything else i
 ## Tests
 
 ```sh
-.venv/bin/pytest                          # the whole suite
-.venv/bin/pytest tests/test_msinet_parity.py -v -s    # just the parity test, verbose
+.venv/bin/pytest                                      # the whole suite
+.venv/bin/pytest tests/test_msinet_parity.py -v -s    # parity test, verbose
+.venv/bin/pytest tests/test_ueyes_dataset.py -v       # UEyes loader tests
 ```
 
-Tests skip cleanly if their prerequisites aren't installed — the parity test skips when `[weights-import]` isn't available or `weights/msinet_salicon.pt` hasn't been imported. This is intentional: a minimal install shouldn't produce false failures. It does mean a green summary with skips is NOT the same as a passing gate — check the `-v` output to confirm the parity tests ran rather than were skipped.
+Tests skip cleanly when their prerequisites aren't installed:
 
-The current gate-closing test is `tests/test_msinet_parity.py` — it runs a fixed-seed random input through both the PyTorch port and Kroner's reference TF SavedModel, then asserts outputs match within `atol=1e-5, rtol=1e-5`. Mean / max / p99 absolute error are printed regardless of pass or fail so a commit that barely passes shows a visible regression signal. First passing run on 2026-04-16 reported mean ~1.1e-7, max ~1.4e-6, p99 ~6.0e-7 — float32 machine-epsilon territory, three orders of magnitude below the tolerance.
+- `test_msinet_parity.py` skips without `[weights-import]` + `weights/msinet_salicon.pt`.
+- `test_ueyes_dataset.py` skips without `data/ueyes/UEyes_dataset/` (i.e. if you haven't run `bash data/fetch.sh` yet). Override the dataset path with `UEYES_ROOT=/some/other/path`.
+
+A minimal install should not produce false failures. Skipping is intentional — but a green summary with skips is NOT the same as a passing gate. Check the `-v` output to confirm which tests actually ran.
+
+**Phase 2 gate (Phase 2):** `test_msinet_parity.py` runs a fixed-seed random input through both the PyTorch port and Kroner's reference TF SavedModel, then asserts outputs match within `atol=1e-5, rtol=1e-5`. Mean / max / p99 absolute error are printed regardless of pass or fail, so a commit that barely passes still shows a visible regression signal. First passing run on 2026-04-16 reported mean ~1.1e-7, max ~1.4e-6, p99 ~6.0e-7 — float32 machine-epsilon territory.
+
+**Phase 3 gate (Phase 3):** `test_ueyes_dataset.py` validates the UEyes loader's split invariants (counts sum to 1,980, no filename overlap, train/val stratified by category at 47 per category × 4), sample shapes and dtypes, value ranges, reproducibility of the val split under a fixed seed, error handling for invalid `saliency_variant` / `val_fraction` / split names, and pickleability (required by `DataLoader(num_workers>0)` forking).
 
 ## Reproduce the current release
 
