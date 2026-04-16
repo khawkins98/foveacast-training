@@ -181,9 +181,24 @@ No release has shipped yet. The pipeline lands phase by phase (see [issue #1](ht
 
    Computes CC (higher better), KLD (lower better), and NSS (higher better) over the held-out UEyes test split (108 images). Stock baseline on the test split, captured 2026-04-16: **CC=0.4934 ± 0.094, KLD=1.1682 ± 0.246, NSS=1.5776 ± 0.451**. Phase 5's gate is "fine-tuned beats stock on at least one metric"; Phase 6 closes when the comparison produces that signal. Phase 7's qualitative overlay against Foveacast's four-screenshot benchmark set is a separate step.
 
-4. **Export** `[later — Phase 8]`
+4. **Export** `[code landed · gate closed · ready for Phase 5 checkpoint]`
 
-   `scripts/export_onnx.py` (TBD) loads the best PyTorch checkpoint, wraps it for `torch.onnx.export`, inlines external data, and validates PyTorch vs `onnxruntime` CPU parity within float tolerance. Target artefact size: order of V2's UNISAL export (~12.5 MB).
+   ```sh
+   # Export stock weights for sanity — Phase 8 gate (PyTorch ↔ onnxruntime
+   # CPU parity within float tolerance) closes regardless of which
+   # checkpoint you use, since it's the export mechanism being validated:
+   .venv/bin/python -m foveacast_training.export_onnx \
+       --checkpoint weights/msinet_salicon.pt \
+       --out releases/foveacast-stock-dev.onnx
+
+   # Export the Phase 5 fine-tuned best.pt for the real release:
+   .venv/bin/python -m foveacast_training.export_onnx \
+       --checkpoint runs/full-*/best.pt \
+       --out releases/foveacast-v3.onnx \
+       --report releases/foveacast-v3.parity.json
+   ```
+
+   First passing run on 2026-04-16 (stock weights as input): **106.4 MB artefact**, **max abs err 1.79e-06** (tolerance 1e-4; 55× headroom), **mean abs err 1.09e-07** — float32 machine-epsilon territory. Gate closed. Artefact size is larger than V2's UNISAL 12.5 MB because MSI-Net is a meaningfully bigger model (25M fp32 params ≈ 100 MB); fp16 or int8 quantisation is a follow-up if browser-side loading turns out to hurt.
 
 ## Releases
 

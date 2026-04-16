@@ -21,6 +21,11 @@ dependencies = [
   "pillow>=10.0",
   "onnx>=1.16",
   "onnxscript>=0.1",
+  # why: onnxruntime is load-bearing for the Phase 8 export module —
+  # export_onnx.py validates PyTorch vs onnxruntime CPU parity as the
+  # gate for producing a release artefact. ~30 MB install; small enough
+  # to keep in core rather than a dedicated extras group.
+  "onnxruntime>=1.17",
 ]
 
 [project.optional-dependencies]
