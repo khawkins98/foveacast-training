@@ -87,18 +87,60 @@ def download_savedmodel(cache_dir: str | None) -> str:
 
 def load_tf_variables(savedmodel_path: str) -> list[tuple[str, "object"]]:
     """Return every variable in the SavedModel as (name, numpy_array) pairs,
-    preserving the declaration order.
+    preserving declaration order.
+
+    Tries two loaders in priority order:
+
+    1. `tf.keras.models.load_model` — the right tool for HF-hosted Keras
+       SavedModels. Exposes weights via `.weights`, which enumerates both
+       trainable and non-trainable parameters in declaration order.
+    2. `tf.saved_model.load` — the generic fallback for non-Keras
+       SavedModels. Exposes weights via `.variables`.
+
+    The first loader that returns a non-empty list wins. If both return
+    empty, raises with the per-loader diagnostic so the user sees what
+    happened.
     """
     import tensorflow as tf  # imported lazily — not a runtime dep of this repo
 
-    # why: tf.saved_model.load handles both Keras-exported and pure
-    # SavedModel graphs. We take the .variables attribute which is the
-    # flat list of tf.Variable objects in declaration order.
-    loaded = tf.saved_model.load(savedmodel_path)
-    variables = loaded.variables
-    # why: materialise to numpy here so the caller doesn't have to hold a
-    # live TF runtime open when building the PyTorch state_dict.
-    return [(v.name, v.numpy()) for v in variables]
+    attempts: list[tuple[str, object]] = []
+
+    # Attempt 1: Keras loader. compile=False skips reconstructing the optimiser
+    # (we only need forward-pass weights), and tolerates SavedModels saved
+    # without training-time metadata.
+    try:
+        model = tf.keras.models.load_model(savedmodel_path, compile=False)
+        weights = list(model.weights)
+        attempts.append(("tf.keras.models.load_model → model.weights", weights))
+        if weights:
+            print(f"  loader: tf.keras.models.load_model ({len(weights)} weights)")
+            return [(w.name, w.numpy()) for w in weights]
+    except Exception as e:
+        attempts.append(("tf.keras.models.load_model", f"raised {type(e).__name__}: {e}"))
+
+    # Attempt 2: low-level SavedModel.
+    try:
+        loaded = tf.saved_model.load(savedmodel_path)
+        variables = list(loaded.variables)
+        attempts.append(("tf.saved_model.load → loaded.variables", variables))
+        if variables:
+            print(f"  loader: tf.saved_model.load ({len(variables)} variables)")
+            return [(v.name, v.numpy()) for v in variables]
+    except Exception as e:
+        attempts.append(("tf.saved_model.load", f"raised {type(e).__name__}: {e}"))
+
+    # Both loaders produced nothing. Report what happened so the user can
+    # paste the output back for diagnosis.
+    lines = [
+        "No loader returned any variables. Per-loader outcome:",
+        "",
+    ]
+    for name, result in attempts:
+        if isinstance(result, list):
+            lines.append(f"  {name}: found {len(result)}")
+        else:
+            lines.append(f"  {name}: {result}")
+    raise RuntimeError("\n".join(lines))
 
 
 def print_discovery(variables: list[tuple[str, "object"]]) -> None:
