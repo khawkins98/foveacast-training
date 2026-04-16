@@ -177,13 +177,16 @@ def test_parity_on_fixed_input(tf_reference, torch_model, fixed_input):
     print(f"  PT output range: [{stats['pt_output_range'][0]:.4f}, "
           f"{stats['pt_output_range'][1]:.4f}]")
 
-    # Primary gate: close enough to be considered parity. Tolerance is
-    # deliberately loose at first; tighten in a follow-up once we see what
-    # the natural residual is.
+    # Primary gate: close enough to be considered parity. The first
+    # successful run produced mean ~1.1e-7 and max ~1.4e-6 — float32
+    # machine-epsilon territory. atol=1e-5 leaves roughly an order of
+    # magnitude of headroom while still catching structural regressions
+    # (a re-introduced bilinear-semantics mismatch would blow this by
+    # 3–4 orders, as the initial port did).
     np.testing.assert_allclose(
         y_pt, y_tf,
-        atol=1e-3,
-        rtol=1e-3,
+        atol=1e-5,
+        rtol=1e-5,
         err_msg="PyTorch port diverges from TF reference beyond tolerance",
     )
 

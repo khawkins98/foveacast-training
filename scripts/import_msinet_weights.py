@@ -2,10 +2,17 @@
 
 One-time import script. The HuggingFace deposit at
 https://huggingface.co/alexanderkroner/MSI-Net holds the SALICON-trained
-MSI-Net as a TensorFlow 2.15 SavedModel. This script walks that SavedModel's
-variables, reorders the conv kernels from TF's HWIO layout to PyTorch's OIHW,
-and writes the resulting state_dict to weights/msinet_salicon.pt for use by
-`foveacast_training.msinet.MSINet`.
+MSI-Net as a TensorFlow SavedModel that was exported *frozen* — the weights
+live as `Const` ops inside the inference graph, not as restorable
+`tf.Variable` objects. Neither `tf.saved_model.load().variables` nor
+`tf.keras.models.load_model(...).weights` surfaces them (both return empty
+lists because there are literally no live variables in the re-loaded model).
+
+This script walks the graph down to the real inference body (two
+`PartitionedCall` indirections under `serving_default`), locates each conv
+layer's kernel and bias as named `Const` ops, transposes kernels from TF's
+HWIO layout to PyTorch's OIHW, and writes the resulting state_dict to
+`weights/msinet_salicon.pt`.
 
 Run once per contributor workstation. The output `.pt` file is gitignored;
 contributors can either run this script or (eventually) pull a pre-computed
@@ -21,9 +28,9 @@ Usage:
     # → writes weights/msinet_salicon.pt and prints a parity-ready summary.
 
 Optional:
-    --discover    : print the full list of TF variables and exit without
-                    writing anything. Useful if the variable-order assumption
-                    below breaks on a newer SavedModel revision.
+    --discover    : print the full list of Const ops in the inference body
+                    and exit without writing anything. Useful if the graph
+                    structure changes on a newer SavedModel revision.
     --out PATH    : override the output path (default: weights/msinet_salicon.pt).
     --cache DIR   : override the HuggingFace snapshot cache dir.
 """
@@ -34,40 +41,42 @@ import argparse
 import os
 from pathlib import Path
 
-# Layer-order contract between this importer and foveacast_training.msinet.
-# MSINet declares its Conv2d layers in this exact order in __init__; the
-# HuggingFace SavedModel's variables appear in the same order because both
-# derive from the same reference network definition. Keeping the list
-# explicit makes a mismatch easy to diagnose.
-#
-# Each entry is (layer_name_in_MSINet, expected_HWIO_kernel_shape). We pair
-# kernels and biases positionally — kernel N is followed by bias N in the
-# TF variable list, which is the standard Keras Dense/Conv ordering.
-EXPECTED_LAYERS: list[tuple[str, tuple[int, int, int, int]]] = [
-    ("conv1_1",       (3, 3,    3,   64)),
-    ("conv1_2",       (3, 3,   64,   64)),
-    ("conv2_1",       (3, 3,   64,  128)),
-    ("conv2_2",       (3, 3,  128,  128)),
-    ("conv3_1",       (3, 3,  128,  256)),
-    ("conv3_2",       (3, 3,  256,  256)),
-    ("conv3_3",       (3, 3,  256,  256)),
-    ("conv4_1",       (3, 3,  256,  512)),
-    ("conv4_2",       (3, 3,  512,  512)),
-    ("conv4_3",       (3, 3,  512,  512)),
-    ("conv5_1",       (3, 3,  512,  512)),
-    ("conv5_2",       (3, 3,  512,  512)),
-    ("conv5_3",       (3, 3,  512,  512)),
-    ("aspp_b1",       (1, 1, 1280,  256)),
-    ("aspp_b2",       (3, 3, 1280,  256)),
-    ("aspp_b3",       (3, 3, 1280,  256)),
-    ("aspp_b4",       (3, 3, 1280,  256)),
-    ("aspp_b5",       (1, 1, 1280,  256)),
-    ("aspp_proj",     (1, 1, 1280,  256)),
-    ("decoder_conv1", (3, 3,  256,  128)),
-    ("decoder_conv2", (3, 3,  128,   64)),
-    ("decoder_conv3", (3, 3,   64,   32)),
-    ("decoder_conv4", (3, 3,   32,    1)),
-]
+# Map Kroner-scope TF layer names (from his original model.py) to our PyTorch
+# MSINet attribute names. The left side is what appears in the SavedModel's
+# Const op names (e.g. "conv1/conv1_1/kernel"); the right side is what
+# MSINet uses (e.g. "conv1_1.weight"). Keeping the mapping explicit catches
+# silent renames or reorderings on newer HF revisions.
+TF_TO_PYTORCH: dict[str, str] = {
+    "conv1/conv1_1": "conv1_1",
+    "conv1/conv1_2": "conv1_2",
+    "conv2/conv2_1": "conv2_1",
+    "conv2/conv2_2": "conv2_2",
+    "conv3/conv3_1": "conv3_1",
+    "conv3/conv3_2": "conv3_2",
+    "conv3/conv3_3": "conv3_3",
+    "conv4/conv4_1": "conv4_1",
+    "conv4/conv4_2": "conv4_2",
+    "conv4/conv4_3": "conv4_3",
+    "conv5/conv5_1": "conv5_1",
+    "conv5/conv5_2": "conv5_2",
+    "conv5/conv5_3": "conv5_3",
+    "aspp/conv1_1":  "aspp_b1",
+    "aspp/conv1_2":  "aspp_b2",
+    "aspp/conv1_3":  "aspp_b3",
+    "aspp/conv1_4":  "aspp_b4",
+    "aspp/conv1_5":  "aspp_b5",
+    "aspp/conv2":    "aspp_proj",
+    "decoder/conv1": "decoder_conv1",
+    "decoder/conv2": "decoder_conv2",
+    "decoder/conv3": "decoder_conv3",
+    "decoder/conv4": "decoder_conv4",
+}
+
+# why: every layer in the MSI-Net SavedModel has both a kernel and a bias.
+# This set is reserved for future-proofing — if a re-export ever drops a
+# bias (e.g. decoder/conv4's bias is near-zero at ~2.4e-5), a layer can be
+# added here so the importer doesn't error on the missing tensor.
+LAYERS_WITHOUT_BIAS: set[str] = set()
 
 
 def download_savedmodel(cache_dir: str | None) -> str:
@@ -75,9 +84,8 @@ def download_savedmodel(cache_dir: str | None) -> str:
     from huggingface_hub import snapshot_download
 
     # why: snapshot_download is idempotent — re-runs reuse the cached files
-    # at HF's default cache location (~/.cache/huggingface). Passing
-    # local_dir lets the caller pin to a project-relative path if they
-    # want everything in one place.
+    # at HF's default cache location. Passing local_dir lets the caller pin
+    # to a project-relative path if they want everything in one place.
     local_path = snapshot_download(
         repo_id="alexanderkroner/MSI-Net",
         local_dir=cache_dir,
@@ -85,130 +93,113 @@ def download_savedmodel(cache_dir: str | None) -> str:
     return local_path
 
 
-def load_tf_variables(savedmodel_path: str) -> list[tuple[str, "object"]]:
-    """Return every variable in the SavedModel as (name, numpy_array) pairs,
-    preserving declaration order.
+def _descend_partitioned_calls(graph, depth: int = 0, max_depth: int = 8):
+    """Walk through `PartitionedCall` / `StatefulPartitionedCall` indirections
+    until we reach a function body with more than a trivial number of ops.
 
-    Tries two loaders in priority order:
-
-    1. `tf.keras.models.load_model` — the right tool for HF-hosted Keras
-       SavedModels. Exposes weights via `.weights`, which enumerates both
-       trainable and non-trainable parameters in declaration order.
-    2. `tf.saved_model.load` — the generic fallback for non-Keras
-       SavedModels. Exposes weights via `.variables`.
-
-    The first loader that returns a non-empty list wins. If both return
-    empty, raises with the per-loader diagnostic so the user sees what
-    happened.
+    The HF SavedModel wraps the real inference body inside two nested
+    PartitionedCalls (serving_default → __inference__wrapped_model_X →
+    __inference_pruned_Y). We follow that chain automatically rather than
+    hard-coding depth 2 so a future re-export with different wrapping still
+    works.
     """
-    import tensorflow as tf  # imported lazily — not a runtime dep of this repo
+    ops = list(graph.get_operations())
+    pcs = [o for o in ops if o.type in ("PartitionedCall", "StatefulPartitionedCall")]
 
-    attempts: list[tuple[str, object]] = []
+    # A "real" body has many ops of many types; a wrapper has 3–5 ops dominated
+    # by a single PartitionedCall. 20 is the cutoff — safely above any wrapper
+    # size and well below the real body (300+ ops).
+    if len(ops) >= 20 or not pcs or depth >= max_depth:
+        return graph
 
-    # Attempt 1: Keras loader. compile=False skips reconstructing the optimiser
-    # (we only need forward-pass weights), and tolerates SavedModels saved
-    # without training-time metadata.
-    try:
-        model = tf.keras.models.load_model(savedmodel_path, compile=False)
-        weights = list(model.weights)
-        attempts.append(("tf.keras.models.load_model → model.weights", weights))
-        if weights:
-            print(f"  loader: tf.keras.models.load_model ({len(weights)} weights)")
-            return [(w.name, w.numpy()) for w in weights]
-    except Exception as e:
-        attempts.append(("tf.keras.models.load_model", f"raised {type(e).__name__}: {e}"))
-
-    # Attempt 2: low-level SavedModel.
-    try:
-        loaded = tf.saved_model.load(savedmodel_path)
-        variables = list(loaded.variables)
-        attempts.append(("tf.saved_model.load → loaded.variables", variables))
-        if variables:
-            print(f"  loader: tf.saved_model.load ({len(variables)} variables)")
-            return [(v.name, v.numpy()) for v in variables]
-    except Exception as e:
-        attempts.append(("tf.saved_model.load", f"raised {type(e).__name__}: {e}"))
-
-    # Both loaders produced nothing. Report what happened so the user can
-    # paste the output back for diagnosis.
-    lines = [
-        "No loader returned any variables. Per-loader outcome:",
-        "",
-    ]
-    for name, result in attempts:
-        if isinstance(result, list):
-            lines.append(f"  {name}: found {len(result)}")
-        else:
-            lines.append(f"  {name}: {result}")
-    raise RuntimeError("\n".join(lines))
+    inner = graph._get_function(pcs[0].get_attr("f").name).graph
+    return _descend_partitioned_calls(inner, depth + 1, max_depth)
 
 
-def print_discovery(variables: list[tuple[str, "object"]]) -> None:
-    """Verbose dump of what we found in the SavedModel. Run with --discover
-    if the positional assignment below breaks on a newer revision of the
-    weights.
+def load_tf_constants(savedmodel_path: str) -> dict[str, "object"]:
+    """Return {tf_const_name: numpy_array} for every named Const in the
+    real inference body. Only includes float32 tensors — integer shape
+    constants (dilation rates, reduction axes, etc.) are filtered out.
     """
-    print(f"Found {len(variables)} variables in the SavedModel:")
+    import tensorflow as tf
+
+    loaded = tf.saved_model.load(savedmodel_path)
+    serving = loaded.signatures["serving_default"]
+    body = _descend_partitioned_calls(serving.graph)
+
+    consts: dict[str, object] = {}
+    for op in body.get_operations():
+        if op.type != "Const":
+            continue
+        dtype = op.outputs[0].dtype
+        if dtype != tf.float32:
+            # why: filter out integer constants used for reshape/reduce axes
+            # and similar plumbing; only float32 tensors are candidate weights.
+            continue
+        value = tf.make_ndarray(op.get_attr("value"))
+        consts[op.name] = value
+
+    print(f"  collected {len(consts)} float32 Const tensors from {body.name}")
+    return consts
+
+
+def print_discovery(consts: dict[str, "object"]) -> None:
+    """Dump the float32 Const tensors we found. Run with --discover if the
+    name-based mapping below breaks on a newer SavedModel revision.
+    """
+    print(f"Found {len(consts)} float32 constants:")
     print()
-    print(f"  {'index':>5} {'shape':24} {'dtype':10} {'name'}")
-    print(f"  {'-' * 5} {'-' * 24} {'-' * 10} {'-' * 40}")
-    for i, (name, arr) in enumerate(variables):
-        shape = str(tuple(arr.shape))
-        dtype = str(arr.dtype)
-        print(f"  {i:5d} {shape:24} {dtype:10} {name}")
+    print(f"  {'shape':24} name")
+    print(f"  {'-' * 24} {'-' * 60}")
+    for name in sorted(consts):
+        value = consts[name]
+        print(f"  {str(value.shape):24} {name}")
 
 
-def build_state_dict(variables: list[tuple[str, "object"]]) -> dict[str, "object"]:
-    """Pair up TF variables with MSINet's expected layers and return a
+def build_state_dict(consts: dict[str, "object"]) -> dict[str, "object"]:
+    """Map TF Const tensors onto MSINet's layer names and return a
     PyTorch-compatible state_dict.
     """
     import numpy as np
     import torch
 
-    # Filter to 4D kernels and 1D biases. A well-formed MSI-Net SavedModel
-    # contains exactly 23 of each (one kernel + one bias per Conv2d layer).
-    kernels = [(n, a) for n, a in variables if a.ndim == 4]
-    biases = [(n, a) for n, a in variables if a.ndim == 1]
-
-    if len(kernels) != len(EXPECTED_LAYERS) or len(biases) != len(EXPECTED_LAYERS):
-        raise RuntimeError(
-            f"Expected {len(EXPECTED_LAYERS)} conv kernels and {len(EXPECTED_LAYERS)} "
-            f"biases; found {len(kernels)} kernels and {len(biases)} biases. "
-            f"Run with --discover to see the full variable list."
-        )
-
     state_dict: dict[str, object] = {}
+    missing: list[str] = []
 
-    # why: iterate the three lists in lock-step. Shape assertion at every
-    # step catches any ordering drift between TF's variable enumeration
-    # and MSINet's declaration order — silent misalignment would produce
-    # a model that loads without error but predicts garbage.
-    for (layer_name, expected_hwio), (k_name, k_arr), (b_name, b_arr) in zip(
-        EXPECTED_LAYERS, kernels, biases, strict=True
-    ):
-        if tuple(k_arr.shape) != expected_hwio:
-            raise RuntimeError(
-                f"Kernel shape mismatch at layer '{layer_name}': "
-                f"expected HWIO {expected_hwio}, got {tuple(k_arr.shape)} "
-                f"(TF variable: {k_name}). Run with --discover for context."
-            )
-        expected_bias = (expected_hwio[3],)
-        if tuple(b_arr.shape) != expected_bias:
-            raise RuntimeError(
-                f"Bias shape mismatch at layer '{layer_name}': "
-                f"expected {expected_bias}, got {tuple(b_arr.shape)} "
-                f"(TF variable: {b_name})."
-            )
+    for tf_scope, pt_name in TF_TO_PYTORCH.items():
+        kernel_key = f"{tf_scope}/kernel"
+        bias_key = f"{tf_scope}/bias"
 
-        # HWIO → OIHW.
+        if kernel_key not in consts:
+            missing.append(kernel_key)
+            continue
+
+        # HWIO → OIHW transpose.
         # why: TensorFlow stores Conv2d kernels as (H, W, in_channels,
         # out_channels); PyTorch expects (out_channels, in_channels, H, W).
-        # The numpy.transpose permutation (3, 2, 0, 1) is the canonical fix.
-        k_pyt = np.transpose(k_arr, (3, 2, 0, 1))
+        # The permutation (3, 2, 0, 1) is the canonical fix.
+        kernel = consts[kernel_key]
+        kernel_pt = np.transpose(kernel, (3, 2, 0, 1))
+        state_dict[f"{pt_name}.weight"] = torch.from_numpy(kernel_pt.copy())
 
-        state_dict[f"{layer_name}.weight"] = torch.from_numpy(k_pyt.copy())
-        state_dict[f"{layer_name}.bias"] = torch.from_numpy(b_arr.copy())
+        if bias_key in consts:
+            bias = consts[bias_key]
+            state_dict[f"{pt_name}.bias"] = torch.from_numpy(bias.copy())
+        elif tf_scope in LAYERS_WITHOUT_BIAS:
+            # Expected — the MSINet definition has bias=False for this layer.
+            pass
+        else:
+            missing.append(bias_key)
 
+    if missing:
+        raise RuntimeError(
+            "Could not locate the following Const tensors in the SavedModel:\n"
+            + "\n".join(f"  - {k}" for k in missing)
+            + "\n\nRun with --discover to see the full list of what is present."
+        )
+
+    print(f"  built state_dict with {len(state_dict)} tensors "
+          f"({len(TF_TO_PYTORCH)} layers, one weight + optional bias each)")
     return state_dict
 
 
@@ -240,7 +231,7 @@ def main() -> None:
     parser.add_argument(
         "--discover",
         action="store_true",
-        help="print the SavedModel's variable list and exit (no write).",
+        help="print the SavedModel's float32 Const list and exit (no write).",
     )
     parser.add_argument(
         "--out",
@@ -258,15 +249,15 @@ def main() -> None:
     savedmodel_path = download_savedmodel(args.cache)
     print(f"  local path: {savedmodel_path}")
 
-    print("→ Loading TF variables...")
-    variables = load_tf_variables(savedmodel_path)
+    print("→ Walking inference graph to find weight Const tensors...")
+    consts = load_tf_constants(savedmodel_path)
 
     if args.discover:
-        print_discovery(variables)
+        print_discovery(consts)
         return
 
-    print(f"→ Building PyTorch state_dict from {len(variables)} TF variables...")
-    state_dict = build_state_dict(variables)
+    print("→ Building PyTorch state_dict...")
+    state_dict = build_state_dict(consts)
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

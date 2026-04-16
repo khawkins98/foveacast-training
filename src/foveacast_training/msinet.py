@@ -60,6 +60,72 @@ import torch.nn.functional as F
 IMAGENET_MEAN_RGB_ORDER = (103.939, 116.779, 123.68)
 
 
+def _tf1_bilinear_upsample(x: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
+    """tf.image.resize_bilinear with align_corners=False, half_pixel_centers=False.
+
+    The HuggingFace MSI-Net SavedModel's ResizeBilinear ops ship with those
+    exact attributes — TF 1.x legacy semantics. PyTorch's `F.interpolate`
+    offers `align_corners=False` (half-pixel-center sampling) and
+    `align_corners=True` (endpoint-aligned sampling), and *neither*
+    reproduces TF 1.x legacy. The difference is ~0.25 pixels of source-
+    sampling offset, which compounds through three decoder upsamples into
+    output-level errors of ~2% mean / ~20% max per Phase 2's first
+    parity run.
+
+    Reference: TensorFlow 1.x `image_resizer_ops.cc`, `ResizeBilinearOp`.
+    With the default attribute values (both False), source position is::
+
+        src_y = dst_y * (in_h / out_h)
+        src_x = dst_x * (in_w / out_w)
+
+    — a plain ratio with no half-pixel offset. The boundary rows/cols get
+    clamped to the last source pixel (via `clamp(i+1, 0, H-1)`), which
+    produces the characteristic TF-1.x duplicated-edge behaviour.
+
+    ONNX export note for Phase 8: this function uses integer-index gather
+    rather than `F.interpolate`, which means `torch.onnx.export` will emit
+    `Gather` + `Mul` + `Add` ops rather than a single `Resize`. That is
+    fine for `onnxruntime-web` (all three ops are standard), just different
+    from the natural-mode export path.
+    """
+    n, c, h, w = x.shape
+    device = x.device
+    dtype = x.dtype
+
+    scale_y = h / out_h
+    scale_x = w / out_w
+
+    # Fractional source positions for each destination pixel.
+    dst_y = torch.arange(out_h, dtype=dtype, device=device)
+    dst_x = torch.arange(out_w, dtype=dtype, device=device)
+    src_y = dst_y * scale_y
+    src_x = dst_x * scale_x
+
+    # Top/bottom and left/right integer source indices, clamped to valid
+    # range so the last output row/col degenerates to the edge source row/col
+    # (the TF 1.x duplicated-edge behaviour).
+    i_top = src_y.floor().long().clamp(0, h - 1)
+    i_bot = (i_top + 1).clamp(0, h - 1)
+    j_lft = src_x.floor().long().clamp(0, w - 1)
+    j_rgt = (j_lft + 1).clamp(0, w - 1)
+
+    # Fractional offsets for the bilinear weights.
+    dy = (src_y - i_top.to(dtype)).view(1, 1, out_h, 1)
+    dx = (src_x - j_lft.to(dtype)).view(1, 1, 1, out_w)
+
+    # Gather the four surrounding corners. Broadcasting [:, None] × [None, :]
+    # expands the per-row and per-column index tensors into the full
+    # (out_h, out_w) lattice.
+    tl = x[:, :, i_top[:, None], j_lft[None, :]]
+    tr = x[:, :, i_top[:, None], j_rgt[None, :]]
+    bl = x[:, :, i_bot[:, None], j_lft[None, :]]
+    br = x[:, :, i_bot[:, None], j_rgt[None, :]]
+
+    top = tl * (1 - dx) + tr * dx
+    bot = bl * (1 - dx) + br * dx
+    return top * (1 - dy) + bot * dy
+
+
 class MSINet(nn.Module):
     """Kroner et al. 2020 MSI-Net, ported to PyTorch.
 
@@ -191,14 +257,10 @@ class MSINet(nn.Module):
         # the reference does.
         b5 = features.mean(dim=(2, 3), keepdim=True)
         b5 = F.relu(self.aspp_b5(b5))
-        b5 = F.interpolate(
-            b5,
-            size=features.shape[2:],
-            mode="bilinear",
-            # why: align_corners=False matches TF 1.x tf.image.resize_bilinear
-            # default, which is what Kroner's reference used at training time.
-            align_corners=False,
-        )
+        # why: _tf1_bilinear_upsample (not F.interpolate) to match the
+        # frozen SavedModel's ResizeBilinear attributes exactly — see
+        # the docstring on that helper for the TF 1.x legacy rationale.
+        b5 = _tf1_bilinear_upsample(b5, features.shape[2], features.shape[3])
 
         context = torch.cat([b1, b2, b3, b4, b5], dim=1)
         return F.relu(self.aspp_proj(context))
@@ -208,16 +270,20 @@ class MSINet(nn.Module):
         Output spatial dimensions are 8x the input (recovering the H/8
         downsampling the encoder did).
         """
-        # why: each block doubles spatial resolution via bilinear upsample,
-        # then applies a 3x3 conv. align_corners=False matches TF 1.x default,
-        # same rationale as in _aspp.
-        x = F.interpolate(features, scale_factor=2, mode="bilinear", align_corners=False)
+        # why: each block doubles spatial resolution via TF 1.x legacy
+        # bilinear upsample, then applies a 3x3 conv. See the
+        # _tf1_bilinear_upsample docstring for why F.interpolate is not
+        # used here.
+        _, _, h, w = features.shape
+        x = _tf1_bilinear_upsample(features, h * 2, w * 2)
         x = F.relu(self.decoder_conv1(x))
 
-        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        _, _, h, w = x.shape
+        x = _tf1_bilinear_upsample(x, h * 2, w * 2)
         x = F.relu(self.decoder_conv2(x))
 
-        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        _, _, h, w = x.shape
+        x = _tf1_bilinear_upsample(x, h * 2, w * 2)
         x = F.relu(self.decoder_conv3(x))
 
         # Final conv to single channel — NO ReLU. The output passes through
