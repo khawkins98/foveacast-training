@@ -118,3 +118,44 @@ Three choices worth documenting even though none of them felt load-bearing at th
 **What Phase 4 will need from this module.** `UEyesDataset(root, split, ...)` and `DataLoader(ds, batch_size=..., shuffle=True, num_workers=...)`. That's it. The prototype training loop and the full fine-tune both call the same Dataset; the only difference is the subset and epoch count they iterate over.
 
 Phase 3 gate closed. `(image, saliency)` tensors of correct shape, splits sum to 1,980, stratified, reproducible. Ticks Phase 3 on #1.
+
+## 2026-04-16 — Phase 4 prototype: the loss curve looks plausible
+
+Phase 4 landed `src/foveacast_training/train.py` + `src/foveacast_training/losses.py` + 10 loss-module tests. Full suite is now 32 passed. The gate — "does the loss curve look plausible on 100 images, 2 epochs" — closed on the first run.
+
+**Numbers from the Phase 4 gate-closing run on M4 MPS (2026-04-16, seeded so they're reproducible):**
+
+| metric     | epoch 1 | epoch 2 | direction |
+|------------|---------|---------|-----------|
+| train loss (avg) | 0.8928 | 0.7612 | ↓ 15%   |
+| val loss         | 0.9006 | 0.8297 | ↓ 8%    |
+| val CC           | 0.6012 | 0.6421 | ↑ 6.8%  |
+
+Training + validation in ~90 seconds (budget was 30 minutes). No NaN, no divergence, no memory pressure. Loss is monotonically decreasing epoch-over-epoch; val CC is monotonically increasing. All three directions point the right way, which is what Phase 4's gate is asking.
+
+A second run produced bit-identical numbers — confirming the `torch.manual_seed(0)` + `numpy.random.seed(0)` + `python random.seed(0)` + `num_workers=0` combination in the prototype config actually gives reproducible metrics, not just a plausible-looking stochastic run. Per-step loss values may still jitter slightly on MPS because Apple's Metal kernels aren't bit-deterministic at the op level, but end-of-epoch averages are stable.
+
+**Starting val CC of 0.60 is the useful signal.** The pretrained SALICON weights already produce a decent correlation with UEyes ground truth before any fine-tuning happens — meaning MSI-Net's natural-scene prior transfers reasonably to UI content out of the box, and fine-tuning is improving on an already-credible baseline rather than starting from noise. That's consistent with the UEyes paper's +10 AUC finding from fine-tuning and suggests the port is structurally sound all the way through.
+
+**Choices that didn't need debating in Phase 4 (worth recording so they don't get re-derived).**
+
+- **KL divergence loss, ported verbatim from Kroner's `loss.py`.** Both pred and target sum-normalised per image (absolute scale is uninformative for saliency; relative-to-other-pixels is the signal). Eps = 1e-7 in every divide and log, same as the reference. KL(p||p) isn't exactly zero under this formulation — eps shifts produce a ~1e-4 residual for a 240×320 map — which is why the corresponding test checks `abs(loss) < 1e-3` rather than strict equality. Not a bug; a physical consequence of the eps handling.
+- **Correlation coefficient as the validation metric.** Pearson correlation on flattened-per-image maps; standard across saliency literature. Range [-1, 1]; higher is better. Works symmetrically on any non-negative scalar field; no preprocessing needed beyond what the training loop already does.
+- **Adam optimiser, learning rate 1e-5 for the prototype.** Matches Kroner's `PARAMS` default. Phase 5's full fine-tune will reduce this by 10× (to 1e-6) per issue #1's guidance on fine-tuning learning rates — but the prototype's goal is "does it work at all," and running at the pretraining LR exercises more of the gradient landscape in the 50 steps we get.
+- **Batch size 4.** Fits comfortably on M4 MPS without checkpointing; leaves headroom for the Phase 5 increase to 8.
+
+**What's deliberately not in this module.**
+
+- **No TensorBoard.** 50 training steps doesn't benefit from TB's strengths. Stdout numbers are sufficient for "does the loss curve look plausible." Phase 5's 8,000-step run is where TB becomes worth the complexity.
+- **No best-checkpoint saving.** Prototype is a sanity check, not a keep-the-artefact exercise. Phase 5 adds this.
+- **No learning-rate scheduler, gradient clipping, early stopping.** Same reasoning — Phase 5 territory.
+- **No data augmentation.** Explicitly a non-goal for the UEyes fine-tune, per ARCHITECTURE.md.
+
+**What Phase 5 will need from this module.** Most of the skeleton is here:
+- `FULL_CONFIG` dict exists but its numbers are placeholder; Phase 5 tunes them.
+- Best-checkpoint saving on validation CC.
+- Learning-rate scheduler (probably cosine or plateau).
+- Early stopping on validation CC plateau.
+- TensorBoard logging as a `--tensorboard` flag (not default).
+
+Phase 4 gate closed. Loss curve looks plausible. Ticks Phase 4 on #1.

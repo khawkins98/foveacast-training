@@ -141,12 +141,39 @@ A minimal install should not produce false failures. Skipping is intentional —
 
 ## Reproduce the current release
 
-Placeholder — populated as the first training run lands.
+No release has shipped yet. The pipeline lands phase by phase (see [issue #1](https://github.com/khawkins98/foveacast-training/issues/1)). Commands are marked `[landed]` / `[next]` / `[later]` so it's obvious which work today.
 
-1. Prototype sanity check: `python -m foveacast_training.train --prototype`. Runs 2 epochs on 100 images. Should converge to a plausible-looking loss curve in ~20 minutes on an M4 MacBook Air.
-2. Full fine-tune: `python -m foveacast_training.train --config configs/v3-msinet-ueyes.yaml`. Expected wall-clock on M4 Air: 4–12 hours. On a CUDA T4 or similar: probably under an hour.
-3. Evaluate: `python -m foveacast_training.eval --checkpoint runs/v3-msinet-ueyes/best.pt`. Produces CC / KLD / NSS scores on a held-out UEyes split and qualitative saliency maps for the committed benchmark screenshots.
-4. Export: `python -m foveacast_training.export_onnx --checkpoint runs/v3-msinet-ueyes/best.pt --out releases/foveacast-v3.onnx`.
+1. **Prototype sanity check** `[landed]`
+
+   ```sh
+   .venv/bin/python -m foveacast_training.train --prototype
+   ```
+
+   Runs 2 epochs on 100 train / 25 val images (shuffled from the UEyes train split under a fixed seed, so numbers below are reproducible across reruns). Writes `runs/prototype-{timestamp}/history.json` with per-step loss and per-epoch validation CC. On an M4 MacBook Air this runs in ~90 seconds. Requires `weights/msinet_salicon.pt` (see above) and `data/ueyes/UEyes_dataset/` (see [`data/README.md`](data/README.md)); no extras beyond `[dev]` — train.py and losses.py depend on core `torch` only.
+
+   **Numbers from the Phase 4 gate-closing run on 2026-04-16** (seeded, bit-reproducible across reruns):
+
+   | metric | epoch 1 | epoch 2 | direction |
+   |---|---|---|---|
+   | train loss (avg) | 0.8928 | 0.7612 | ↓ 15% |
+   | val loss | 0.9006 | 0.8297 | ↓ 8% |
+   | val CC | 0.6012 | 0.6421 | ↑ 6.8% |
+
+2. **Full fine-tune** `[next — Phase 5]`
+
+   ```sh
+   .venv/bin/python -m foveacast_training.train
+   ```
+
+   Drops the `--prototype` flag and runs the full 1,684-image train set for the epoch count in `FULL_CONFIG`. Phase 5 will tune learning rate, early stopping, and best-checkpoint saving; the defaults in `src/foveacast_training/train.py` are placeholder until that phase lands.
+
+3. **Evaluate** `[later — Phase 6]`
+
+   CC / KLD / NSS metrics on the held-out UEyes test split (108 images), plus qualitative overlays on Foveacast's four-screenshot benchmark set.
+
+4. **Export** `[later — Phase 8]`
+
+   `scripts/export_onnx.py` (TBD) loads the best PyTorch checkpoint, wraps it for `torch.onnx.export`, inlines external data, and validates PyTorch vs `onnxruntime` CPU parity within float tolerance. Target artefact size: order of V2's UNISAL export (~12.5 MB).
 
 ## Releases
 
