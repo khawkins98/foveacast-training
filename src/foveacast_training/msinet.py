@@ -59,6 +59,18 @@ import torch.nn.functional as F
 # parity with the reference forward pass.
 IMAGENET_MEAN_RGB_ORDER = (103.939, 116.779, 123.68)
 
+# why: pin the upstream HuggingFace revision so the layer-name contract
+# between our importer (scripts/import_msinet_weights.py) and this module
+# doesn't silently break if Kroner re-exports the deposit. This SHA was
+# `main` on 2026-04-16 — the revision that closed Phase 2's parity gate
+# (atol=1e-5, observed residual ~1e-7 mean). Bump deliberately, not
+# automatically, after re-running the parity test against any new revision.
+#
+# The constant lives here rather than in the importer script because
+# tests/test_msinet_parity.py also needs it and `scripts/` is not a
+# Python package. Single source of truth, imported from both places.
+MSINET_HF_REVISION = "d950b35945db961ae63f84bc2b23f6bd578d0b8f"
+
 
 def _tf1_bilinear_upsample(x: torch.Tensor, out_h: int, out_w: int) -> torch.Tensor:
     """tf.image.resize_bilinear with align_corners=False, half_pixel_centers=False.

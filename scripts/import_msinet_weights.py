@@ -41,6 +41,8 @@ import argparse
 import os
 from pathlib import Path
 
+from foveacast_training.msinet import MSINET_HF_REVISION
+
 # Map Kroner-scope TF layer names (from his original model.py) to our PyTorch
 # MSINet attribute names. The left side is what appears in the SavedModel's
 # Const op names (e.g. "conv1/conv1_1/kernel"); the right side is what
@@ -86,8 +88,11 @@ def download_savedmodel(cache_dir: str | None) -> str:
     # why: snapshot_download is idempotent — re-runs reuse the cached files
     # at HF's default cache location. Passing local_dir lets the caller pin
     # to a project-relative path if they want everything in one place.
+    # revision= pins the exact upstream commit so a re-export doesn't
+    # silently drift us off parity.
     local_path = snapshot_download(
         repo_id="alexanderkroner/MSI-Net",
+        revision=MSINET_HF_REVISION,
         local_dir=cache_dir,
     )
     return local_path

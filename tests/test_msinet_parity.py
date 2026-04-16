@@ -89,7 +89,15 @@ def tf_reference():
     import tensorflow as tf
     from huggingface_hub import snapshot_download
 
-    local_path = snapshot_download(repo_id="alexanderkroner/MSI-Net")
+    from foveacast_training.msinet import MSINET_HF_REVISION
+
+    # why: pin to the exact HF revision the parity test was first passed
+    # against — MSINET_HF_REVISION is the single source of truth, imported
+    # here and by the weight importer script.
+    local_path = snapshot_download(
+        repo_id="alexanderkroner/MSI-Net",
+        revision=MSINET_HF_REVISION,
+    )
     return tf.saved_model.load(local_path)
 
 
