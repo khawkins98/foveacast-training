@@ -54,15 +54,11 @@ foveacast-training/
 ├── tests/
 │   └── test_msinet_parity.py     # PyTorch-vs-TF numerical parity gate
 │
-├── notebooks/
-│   └── prototype.ipynb    # "100 images, 2 epochs" sanity check
-│
-├── benchmark/
-│   └── screenshots/       # Foveacast's comparison set, for qualitative review
-│
 ├── weights/               # gitignored; imported pretrained weights (.pt)
-└── runs/                  # gitignored; checkpoints + TensorBoard logs
+└── runs/                  # gitignored; checkpoints + TensorBoard logs (Phase 4+)
 ```
+
+`benchmark/screenshots/` (for Phase 7 qualitative eval) and `notebooks/` (optional Jupyter work) are created on demand by the phases that need them.
 
 ## Setup
 
@@ -71,57 +67,67 @@ You need Python 3.12, `uv`, and an Apple-Silicon Mac (MPS) or a CUDA GPU. The tr
 ```sh
 uv python install 3.12
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -e '.[training]'
+uv pip install --python .venv/bin/python -e '.[dev]'
 ```
+
+**Convention on invoking Python.** Every command in this README uses absolute paths into `.venv/bin/` (`.venv/bin/python`, `.venv/bin/pytest`) rather than `source .venv/bin/activate` first. This is deliberate: commands copy-paste cleanly regardless of shell state, and there is no ambient-activation footgun where a forgotten `deactivate` sends a command into the system Python. If you prefer activation, the commands still work — just drop the `.venv/bin/` prefix.
 
 The extras groups are:
 
-- `[training]` — TensorBoard, tqdm, PyYAML. What you want for the fine-tune loop.
-- `[eval]` — SciPy, scikit-image. For the saliency metrics in Phase 6.
-- `[dev]` — Ruff, Jupyter, pytest. For development and running tests.
-- `[weights-import]` — TensorFlow, huggingface_hub. Only needed for the one-time weight port below.
+- `[dev]` — Ruff, Jupyter, pytest. Always installed; covers test-suite running.
+- `[training]` — TensorBoard, tqdm, PyYAML. For the fine-tune loop (Phase 4+).
+- `[eval]` — SciPy, scikit-image. For the saliency metrics (Phase 6).
+- `[weights-import]` — TensorFlow (~500 MB), huggingface_hub. Only needed for the one-time weight port described in the next section. Disposable afterwards — `uv pip uninstall tensorflow` frees the disk space once you have `weights/msinet_salicon.pt`.
 
-Install multiple at once by comma-separating: `.[training,eval,dev]`.
+Install multiple at once by comma-separating: `.[dev,weights-import]`.
 
-Fetch the UEyes dataset (12.9 GB zip). Instructions in [`data/README.md`](data/README.md).
+Fetch the UEyes dataset (12.9 GB zip). Instructions in [`data/README.md`](data/README.md). Only needed for Phase 3+ — not for running the Phase 2 parity test.
 
 ## Import the pretrained MSI-Net weights
 
-A one-time step per contributor. Kroner's SALICON-pretrained MSI-Net ships as a TensorFlow SavedModel on [HuggingFace](https://huggingface.co/alexanderkroner/MSI-Net); the importer downloads that, walks its variables, and writes them out as a PyTorch `state_dict` that `foveacast_training.msinet.MSINet` can load with `strict=True`.
+A one-time step per contributor. Kroner's SALICON-pretrained MSI-Net ships as a TensorFlow SavedModel on [HuggingFace](https://huggingface.co/alexanderkroner/MSI-Net); `scripts/import_msinet_weights.py` downloads that deposit, walks the frozen inference graph to extract weights stored as named `Const` ops (see [`LEARNINGS.md`](LEARNINGS.md) 2026-04-16 Phase 2 for why this is harder than it sounds), transposes conv kernels from TF's HWIO layout to PyTorch's OIHW, and writes a PyTorch `state_dict` that `foveacast_training.msinet.MSINet` loads with `strict=True`.
+
+**Cost to budget:** ~500 MB on disk for TensorFlow (uninstallable afterwards), ~100 MB network for the HF snapshot (cached at `~/.cache/huggingface/hub` by default — reused across re-runs), ~30 seconds wall-clock for the import itself. ~5–10 minutes total on a cold `uv venv` dominated by TF's install.
 
 ```sh
 uv pip install --python .venv/bin/python -e '.[weights-import]'
 .venv/bin/python scripts/import_msinet_weights.py
 ```
 
-The importer is idempotent: re-running it re-downloads nothing if the HF snapshot is cached, and re-writes the same `.pt` each time. Expected output:
+The importer is idempotent: re-running it re-uses the cached HF snapshot and over-writes the same `.pt` each time. Real output from a fresh run (2026-04-16):
 
 ```
 → Downloading HuggingFace SavedModel (alexanderkroner/MSI-Net)...
-→ Loading TF variables...
-→ Building PyTorch state_dict from N TF variables...
-✓ Wrote weights/msinet_salicon.pt (≈100 MB)
+  local path: /Users/you/.cache/huggingface/hub/models--alexanderkroner--MSI-Net/snapshots/d950b35945db961ae63f84bc2b23f6bd578d0b8f
+→ Walking inference graph to find weight Const tensors...
+  collected 48 float32 Const tensors from pruned
+→ Building PyTorch state_dict...
+  built state_dict with 46 tensors (23 layers, one weight + optional bias each)
+✓ Wrote weights/msinet_salicon.pt (99.8 MB)
 → Verifying by loading into MSINet with strict=True...
   loaded 24,934,209 parameters
-  forward pass on (1, 3, 240, 320) → (1, 1, 240, 320), range [...]
-✓ Import complete.
+  forward pass on (1, 3, 240, 320) → (1, 1, 240, 320), range [0.0000, 1.0000]
+✓ Import complete. Run `pytest tests/test_msinet_parity.py` to confirm numerical parity with the reference forward pass.
 ```
 
-If the variable ordering breaks on a newer HF revision, pass `--discover` to see the raw variable list and diagnose. The script writes nothing in that mode.
+If the variable ordering breaks on a newer HF revision (unlikely but possible — the deposit could be re-exported), pass `--discover` to dump the graph's float32 constants and diagnose. The script writes nothing in that mode:
 
-After the import, the 500 MB TensorFlow install is no longer needed for anything else in this repo. Feel free to `uv pip uninstall tensorflow` afterwards if disk space is tight; the resulting `weights/msinet_salicon.pt` is all that subsequent phases depend on.
+```sh
+.venv/bin/python scripts/import_msinet_weights.py --discover
+```
+
+After the import, the TensorFlow install is no longer needed for anything else in this repo. `uv pip uninstall tensorflow tf_keras` frees the disk space; the resulting `weights/msinet_salicon.pt` is all that subsequent phases depend on.
 
 ## Tests
 
 ```sh
-uv pip install --python .venv/bin/python -e '.[dev]'
 .venv/bin/pytest                          # the whole suite
 .venv/bin/pytest tests/test_msinet_parity.py -v -s    # just the parity test, verbose
 ```
 
-Tests skip cleanly if their prerequisites aren't installed (e.g. the parity test skips when `[weights-import]` isn't available or `weights/msinet_salicon.pt` hasn't been imported), so a minimal install doesn't produce false failures.
+Tests skip cleanly if their prerequisites aren't installed — the parity test skips when `[weights-import]` isn't available or `weights/msinet_salicon.pt` hasn't been imported. This is intentional: a minimal install shouldn't produce false failures. It does mean a green summary with skips is NOT the same as a passing gate — check the `-v` output to confirm the parity tests ran rather than were skipped.
 
-The current gate-closing test is `tests/test_msinet_parity.py` — it runs a fixed-seed random input through both the PyTorch port and Kroner's reference TF SavedModel, then asserts outputs match within `atol=1e-3, rtol=1e-3`. Mean / max / p99 absolute error are printed regardless of pass or fail so a commit that barely passes shows a visible regression signal.
+The current gate-closing test is `tests/test_msinet_parity.py` — it runs a fixed-seed random input through both the PyTorch port and Kroner's reference TF SavedModel, then asserts outputs match within `atol=1e-5, rtol=1e-5`. Mean / max / p99 absolute error are printed regardless of pass or fail so a commit that barely passes shows a visible regression signal. First passing run on 2026-04-16 reported mean ~1.1e-7, max ~1.4e-6, p99 ~6.0e-7 — float32 machine-epsilon territory, three orders of magnitude below the tolerance.
 
 ## Reproduce the current release
 

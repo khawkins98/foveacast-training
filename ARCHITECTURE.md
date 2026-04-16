@@ -33,7 +33,7 @@ flowchart TD
         FETCH["data/fetch.sh<br/><i>landed</i>"]
         DATA["data/ueyes/UEyes_dataset/<br/><i>gitignored, fetched on demand</i>"]
         LOADER["ueyes_dataset.py<br/><i>Phase 3</i>"]
-        MODEL["msinet.py<br/><i>Phase 2</i>"]
+        MODEL["msinet.py<br/><i>landed</i>"]
         TRAIN["train.py<br/><i>Phase 4 prototype · Phase 5 full</i>"]
         CKPT["runs/&lt;name&gt;/best.pt<br/><i>gitignored</i>"]
         EVAL["eval.py<br/><i>Phase 6</i>"]
@@ -73,7 +73,7 @@ The `src/foveacast_training/` package is deliberately small — five modules plu
 | Module              | Status     | Responsibility                                                                                 | Depends on                   |
 |---------------------|------------|-----------------------------------------------------------------------------------------------|------------------------------|
 | `__init__.py`       | **landed** | Package marker and `__version__`.                                                             | —                            |
-| `msinet.py`         | **Phase 2**| PyTorch reimplementation of Kroner's MSI-Net: VGG16 encoder (last two maxpools dropped, last block dilated) + ASPP (dilations 1/4/8/12 + global average pooling) + 3-block bilinear-upsample decoder. Includes a one-shot weight importer from the HuggingFace SavedModel and a numerical-parity test against a reference Keras forward pass. | `torch`, `torchvision`       |
+| `msinet.py`         | **landed** | PyTorch reimplementation of Kroner's MSI-Net: VGG16 encoder (last two maxpools dropped, last block dilated) + ASPP (dilations 1/4/8/12 + global average pooling) + 3-block bilinear-upsample decoder. Mean subtraction baked into `forward()`. Bilinear upsamples use a custom `_tf1_bilinear_upsample` helper that reproduces TF 1.x `ResizeBilinear(align_corners=False, half_pixel_centers=False)` — neither PyTorch `F.interpolate` mode matches this. Weight import lives at `scripts/import_msinet_weights.py` (gated by the `[weights-import]` extras); parity test at `tests/test_msinet_parity.py` passes at `atol=1e-5` with observed residual ~1e-7 mean. | `torch`, `torchvision`       |
 | `ueyes_dataset.py`  | **Phase 3**| PyTorch `Dataset` wrapping `data/ueyes/UEyes_dataset/`. Parses `image_types.csv`, handles the upstream train/test split, carves a stratified validation hold-out from train with a fixed seed, loads PNG/JPG/JPEG images and the matching `saliency_maps/heatmaps_3s/` ground-truth maps (target variant tentative — see #1 Phase 3), coerces grayscale `mode=L` images to RGB, resizes+pads to (240, 320) with Kroner's convention (constant 126 for stimuli, 0 for maps). | `torch`, `Pillow`, `numpy`   |
 | `train.py`          | **Phase 4/5** | Fine-tuning loop. Phase 4 is the prototype ("100 images, 2 epochs, does the loss curve look plausible"). Phase 5 is the full run (20–50 epochs, early stopping on validation CC, TensorBoard logging, best-checkpoint saving). Auto-detects device (`mps → cuda → cpu`). | `msinet`, `ueyes_dataset`, `tensorboard`, `tqdm`, `pyyaml` |
 | `eval.py`           | **Phase 6**| Saliency metrics (CC, KLD, NSS) on the held-out UEyes test split, plus qualitative overlays on the four reference screenshots from Foveacast's V2 comparison set. Produces a markdown report for the release notes. | `msinet`, `ueyes_dataset`, `scipy`, `scikit-image` |
@@ -133,7 +133,7 @@ Issue #1 describes ten phases. This table is the compressed version, annotated w
 |-------|--------------------------------------------|----------------------------------------------------------|--------------------------------------------------|
 | 0     | Fetch and verify UEyes                     | `data/fetch.sh` **[landed]**, dataset documented          | Know the shape of inputs and ground truth        |
 | 1     | Decide MSI-Net substrate                   | Decision + this ARCHITECTURE.md **[landed]**              | Chosen path before sinking time                  |
-| 2     | MSI-Net architecture in PyTorch            | `msinet.py` + numerical-parity test                      | Forward pass matches Keras reference             |
+| 2     | MSI-Net architecture in PyTorch            | `msinet.py` + importer + parity test **[landed]**         | Forward pass matches Keras reference             |
 | 3     | UEyes dataset loader                       | `ueyes_dataset.py` + train/val/test split                 | `(image, saliency)` tensors of correct shape     |
 | 4     | Prototype fine-tune                        | `train.py --prototype` runs to completion                 | Loss curve is plausible on 100 images / 2 epochs |
 | 5     | Full fine-tune                             | `runs/v3-msinet-ueyes/best.pt`                            | Validation CC beats stock MSI-Net                |
