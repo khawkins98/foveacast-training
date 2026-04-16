@@ -14,12 +14,13 @@ test properly:
     .venv/bin/python scripts/import_msinet_weights.py
     .venv/bin/pytest tests/test_msinet_parity.py -v
 
-Tolerance is intentionally loose (atol=1e-3, rtol=1e-3) at first. If the
-port reproduces the reference bit-closely, we can tighten later. If it
-drifts badly, that's a signal something is misaligned — pool padding,
-dilation semantics, bilinear corner handling — and the test's reported
-statistics (mean/max absolute error, histogram of deltas) are what we
-debug against.
+Tolerance is `atol=1e-5, rtol=1e-5` — three orders of magnitude above
+the natural residual (~1e-7 mean, ~1e-6 max per the first passing run
+on 2026-04-16) so normal float-precision jitter doesn't trigger a
+false regression, but close enough that a re-introduced bilinear-
+semantics mismatch, pool padding bug, or dilation drift blows through
+the tolerance by 3–4 orders and fails loudly. The test's reported
+mean/max/p99 absolute error are the debug surface.
 """
 
 from __future__ import annotations

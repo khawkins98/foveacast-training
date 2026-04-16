@@ -16,6 +16,7 @@ Read these before making substantive changes:
 
 - [README.md](README.md) — what the repo is for, how to set it up, how to reproduce.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — end-to-end pipeline shape, module responsibilities, the `.onnx` contract with Foveacast, and the phase map. Start here if you are about to touch anything inside `src/foveacast_training/`.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — PR workflow and the documentation-lockstep checklist. The checklist is load-bearing; do not open a PR that adds a module without running through it.
 - [LEARNINGS.md](LEARNINGS.md) — dated prose log of decisions and dead ends. Check this before re-deriving something.
 - [issue #1](https://github.com/khawkins98/foveacast-training/issues/1) — phased plan from fetch-dataset to integration-PR. The handoff brief for anyone (human or LLM) starting work on this repo.
 - Foveacast's [LEARNINGS.md](https://github.com/khawkins98/Foveacast/blob/main/LEARNINGS.md) — the upstream trajectory that explains *why this repo exists at all*. The 2026-04-16 entries on model survey, UMSI++ correction, and companion-repo split are the load-bearing ones.
@@ -46,9 +47,7 @@ MSI-Net → Kroner et al. 2020 (MIT). UEyes → Jiang et al. 2023 (CC BY 4.0). I
 
 ### Humanizer pass on prose
 
-Anything humans read — README, LEARNINGS, CHANGELOG, PR bodies, commit messages, docstrings — should sound like a human wrote it. Before committing long-form prose, re-read for AI-register tells and strip them: "seamlessly", "delightfully", "robust solution", "leverage", "best-in-class", "simply", rule-of-three filler, em-dash overuse.
-
-The register to match is the existing `README.md` and `LEARNINGS.md` in this repo — plain, specific, first-person when useful, why-focused.
+Anything humans read gets a humanizer pass before committing. See [`CONTRIBUTING.md` §Prose register](CONTRIBUTING.md#prose-register) for the list of AI-register tells to strip and the reference voice in this repo. As an AI assistant your baseline output drifts into that register by default, so running the pass explicitly — not relying on it happening automatically — is the thing that matters.
 
 ### Device-agnostic code, MPS as the default test bed
 
@@ -78,13 +77,7 @@ If a decision is reversed later, the original entry stays and a new entry supers
 
 ### Commit-by-commit hygiene
 
-Every commit does one conceptual thing. Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`) with scopes where useful. Body explains *why*, not *what* — the diff already shows what.
-
-If Claude co-authored the commit, add this trailer via HEREDOC:
-
-```
-Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
-```
+See [`CONTRIBUTING.md` §Commit hygiene](CONTRIBUTING.md#commit-hygiene) for the Conventional Commits pattern, the one-conceptual-thing-per-commit rule, and the Claude co-author trailer. No AI-specific overrides here — the workflow is the same for humans and AI.
 
 ### One phase per PR
 
@@ -110,24 +103,11 @@ Issue #1 splits V3 into 10 phases with explicit gates. Each phase lands as its o
 
 ### Documentation lockstep
 
-When your change is not purely internal, check each of these:
-
-- **README.md** — if you added a command, flag, dependency, or supported device.
-- **LEARNINGS.md** — any decision worth keeping for the next contributor.
-- **data/README.md** — anything about the UEyes dataset's layout, split, or preprocessing.
-- **CITATION.cff** — if you added a new cited work.
-- **issue #1** — tick the phase checkbox when it's genuinely done (artefact produced, gate passed).
+Run the pre-PR checklist in [`CONTRIBUTING.md`](CONTRIBUTING.md#the-documentation-lockstep) before marking a PR ready. It is the single source of truth for which files to touch when — ARCHITECTURE, LEARNINGS, README, data/README, CLAUDE, CITATION, issue #1. Prior reviewer passes found real gaps on Phases 2 and 3 that the checklist now catches pre-merge.
 
 ### Risky actions — confirm first
 
-- `git push --force` or anything that rewrites published history.
-- `git reset --hard` or any bulk discard of uncommitted work.
-- `rm -rf` on anything inside the repo.
-- Deleting or renaming the `data/ueyes/` tree after a user has spent 30+ minutes downloading it.
-- Modifying `pyproject.toml` dependency pins that would force a full reinstall.
-- Anything that would publish artefacts (GitHub Releases, Zenodo, HuggingFace).
-
-Creating local commits, running `ruff`, running training scripts against small samples, and pushing a non-main branch are routine.
+See [`CONTRIBUTING.md` §Risky actions](CONTRIBUTING.md#risky-actions) for the list. Same list for humans and AI; duplicating it here invites drift.
 
 ### When asked to review
 
