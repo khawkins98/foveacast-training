@@ -32,14 +32,15 @@ If you are an AI assistant, [`CLAUDE.md`](CLAUDE.md) has the behavioural convent
 
 ## The documentation lockstep
 
-A PR that lands real code almost always needs to touch docs. This checklist is the single load-bearing thing in this file; it encodes what past reviewer passes have caught. Run through it before marking a PR ready.
+A PR that lands real code almost always needs to touch docs. This checklist is the load-bearing section of this file; it encodes what past reviewer passes have caught. Run through it before marking a PR ready.
 
 ### Always
 
 - [ ] Code changes come with tests where it is feasible to test them. Where it isn't, the PR body explains why.
 - [ ] `.venv/bin/ruff check` passes across `src/`, `scripts/`, `tests/`.
 - [ ] The full test suite passes (`.venv/bin/pytest`). A new commit must not break existing gates.
-- [ ] A green summary with skips is NOT the same as a passing gate — if your work closes a phase gate, confirm the relevant test actually *ran* (check `-v` output), not just that nothing failed.
+- [ ] A green summary with skips is NOT the same as a passing gate — if your work closes a phase gate, confirm the relevant test actually *ran* (check `-v` output), not just that nothing failed. **PR body names the gate test(s) and confirms they ran**, not just that pytest exited 0.
+- [ ] **Stale numbers swept.** If you changed a number that also appears in prose (tolerances like `atol=1e-5`, parameter counts like `24,934,209`, byte sizes, mean/max error figures, timing estimates), grep the repo for the old value before committing. README / ARCHITECTURE / LEARNINGS all quote these numbers, and stale ones are the easiest class of docs drift to miss.
 
 ### When you change what a contributor runs
 
@@ -109,4 +110,4 @@ If you're about to open a PR that spans phases, re-scopes the plan in issue #1, 
 
 ---
 
-This file stays short on purpose. If a convention doesn't appear here or in [`CLAUDE.md`](CLAUDE.md), it's not a convention — propose it via an issue rather than enforcing it via review.
+This file stays short on purpose. If a convention doesn't appear here or in [`CLAUDE.md`](CLAUDE.md), it is not a convention — propose it via an issue rather than enforcing it via review.
