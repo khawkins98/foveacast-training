@@ -85,7 +85,15 @@ FULL_CONFIG: dict[str, object] = {
     "learning_rate": 1e-6,  # 10× reduction from paper default for fine-tuning
     "n_train": None,         # full train set
     "n_val": None,           # full val set
-    "num_workers": 4,
+    # why: num_workers=0 as the first-run default for --full. PyTorch
+    # DataLoader with num_workers>0 on MPS is a known foot-gun — fork+
+    # unpickleable MPS state can hang silently at epoch 1 step 0 of a
+    # 4-hour run. num_workers=0 is guaranteed safe; the maintainer can
+    # bump to 2 or 4 after a 1-epoch smoke confirms no hang, if the
+    # first real run turns out I/O-bound. At batch_size=8 on UEyes
+    # (~211 steps/epoch × 30 epochs) the expected floor is well inside
+    # the 4-hour budget anyway.
+    "num_workers": 0,
     "seed": None,             # why: no per-run seeding for throughput in Phase 5
     # Phase 5 safety machinery: all on. These defaults are the "safe first
     # run" numbers; #11 tracks tuning them empirically once we have signal
