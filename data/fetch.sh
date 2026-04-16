@@ -41,6 +41,19 @@ done
 mkdir -p "${DEST}"
 cd "${DEST}"
 
+# --- Short-circuit if already unpacked --------------------------------------
+
+# why: re-running after a successful extract should be a fast no-op, not a
+# re-extract of 12 GB. image_types.csv is a cheap sentinel — it's small,
+# present in every complete extraction, and missing from a partial one.
+SENTINEL="${DEST}/UEyes_dataset/image_types.csv"
+if [[ -f "${SENTINEL}" && "${FETCH_FORCE:-0}" == "0" ]]; then
+  echo "✓ UEyes already unpacked at ${DEST}/UEyes_dataset/"
+  echo "  (sentinel: ${SENTINEL})"
+  echo "  set FETCH_FORCE=1 to redownload and re-extract anyway"
+  exit 0
+fi
+
 # --- Download ---------------------------------------------------------------
 
 echo "→ Fetching ${ZIP_NAME} from Zenodo record ${ZENODO_RECORD}"
