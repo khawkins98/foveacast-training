@@ -110,9 +110,15 @@ def normalized_scanpath_saliency(
         Scalar NSS, averaged across the batch.
     """
     # Z-normalise pred per image.
+    # why: correction=0 gives the population std (divisor = N) rather than
+    # the Bessel-corrected sample std (divisor = N-1). Bylinskii's reference
+    # and most of the saliency literature use population std; PyTorch's
+    # default is Bessel. For a 240×320 pred the bias is ~5e-7 relative, so
+    # numerically invisible, but consistency with the literature matters
+    # when the JSON numbers land in a release note alongside cited values.
     pred_flat = pred.flatten(start_dim=1)
     mu = pred_flat.mean(dim=1, keepdim=True)
-    std = pred_flat.std(dim=1, keepdim=True)
+    std = pred_flat.std(dim=1, keepdim=True, correction=0)
     pred_z = (pred_flat - mu) / (eps + std)
 
     # Sample at fixation locations.

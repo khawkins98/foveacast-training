@@ -54,6 +54,21 @@ def _auto_device() -> torch.device:
     return torch.device("cpu")
 
 
+def load_model(checkpoint_path: Path, device: torch.device) -> MSINet:
+    """Construct MSINet, load a state_dict from `checkpoint_path` with
+    `strict=True`, move to `device`, and put in eval mode.
+
+    Extracted as a reusable helper so Phase 7 (qualitative benchmark
+    rendering) and any future inference-only script can reuse the exact
+    loading convention — `strict=True` + `weights_only=True` — without
+    copy-pasting the five-line setup.
+    """
+    model = MSINet()
+    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict, strict=True)
+    return model.to(device).eval()
+
+
 def evaluate_checkpoint(
     checkpoint_path: Path,
     split: str,
@@ -78,15 +93,10 @@ def evaluate_checkpoint(
     batch_size : int
         For eval. 4 is a safe default for MSINet on M4 MPS.
     """
-    # why: strict=True catches state_dict / module-name drift loudly. If
-    # the fine-tuned checkpoint was saved from a slightly different
-    # MSINet (e.g. added a layer), we want to know now, not after a
-    # quiet "evaluated 108 images but most layers kept their init weights"
-    # regression.
-    model = MSINet()
-    state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    model.load_state_dict(state_dict, strict=True)
-    model = model.to(device).eval()
+    # why: load_model is the shared helper — strict=True catches
+    # state_dict / module-name drift loudly rather than quietly evaluating
+    # 108 images with most layers kept at init.
+    model = load_model(checkpoint_path, device)
 
     # Two datasets — heatmap target for CC/KLD, fixmap target for NSS.
     # Phase 0 + 3 guarantee the split is deterministic given the same

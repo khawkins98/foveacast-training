@@ -138,7 +138,7 @@ Issue #1 describes ten phases. This table is the compressed version, annotated w
 | 3     | UEyes dataset loader                       | `ueyes_dataset.py` + train/val/test split **[landed]**    | `(image, saliency)` tensors of correct shape     |
 | 4     | Prototype fine-tune                        | `train.py --prototype` runs to completion **[landed]**    | Loss curve is plausible on 100 images / 2 epochs |
 | 5     | Full fine-tune                             | `runs/v3-msinet-ueyes/best.pt`                            | Validation CC beats stock MSI-Net                |
-| 6     | Quantitative evaluation                    | CC/KLD/NSS on held-out split **[code landed]**            | Fine-tuned > stock on at least one metric        |
+| 6     | Quantitative evaluation                    | CC/KLD/NSS on held-out split **[code landed]**            | Fine-tuned > stock on at least one metric (stock test baseline: CC=0.49, KLD=1.17, NSS=1.58) |
 | 7     | Qualitative evaluation                     | Renders of the Foveacast four-screenshot benchmark set    | Eyeballs agree with quantitative numbers         |
 | 8     | ONNX export                                | `releases/foveacast-v3.onnx`                              | PyTorch vs onnxruntime CPU outputs within tol    |
 | 9     | Release                                    | Tagged GitHub Release with artefact                       | Artefact exists and metadata is accurate         |

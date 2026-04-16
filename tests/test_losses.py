@@ -173,3 +173,20 @@ def test_nss_handles_zero_fixations():
     pred = torch.rand_like(fixmap)
     nss = normalized_scanpath_saliency(pred, fixmap)
     assert torch.isfinite(nss)
+
+
+def test_nss_handles_near_constant_prediction():
+    """A prediction that is constant except for tiny float noise has
+    std ≈ machine epsilon. The eps guard in the denominator has to keep
+    the output bounded — otherwise float-noise / tiny-std → large spurious
+    NSS. Regression guard against removing or shrinking the eps.
+    """
+    torch.manual_seed(8)
+    pred = torch.full((1, 1, 16, 16), 0.5) + 1e-8 * torch.randn(1, 1, 16, 16)
+    fixmap = _fake_fixmap((1, 1, 16, 16), n_fix=5)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    # Bound: well below NSS=1.0 (which would indicate meaningful signal).
+    # Actual value should be near zero since pred is essentially random
+    # noise with respect to fixmap.
+    assert torch.isfinite(nss)
+    assert abs(nss.item()) < 1.0
