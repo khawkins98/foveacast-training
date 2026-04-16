@@ -42,11 +42,17 @@ foveacast-training/
 │
 ├── src/foveacast_training/
 │   ├── __init__.py
-│   ├── msinet.py          # model architecture (vendored or ported)
-│   ├── ueyes_dataset.py   # PyTorch Dataset wrapping UEyes
-│   ├── train.py           # training loop
-│   ├── eval.py            # saliency metrics (CC, KLD, NSS) on held-out UEyes
-│   └── export_onnx.py     # produce the release artefact
+│   ├── msinet.py          # PyTorch port of MSI-Net (Phase 2, landed)
+│   ├── ueyes_dataset.py   # PyTorch Dataset wrapping UEyes (Phase 3)
+│   ├── train.py           # training loop (Phase 4/5)
+│   ├── eval.py            # saliency metrics (CC, KLD, NSS) (Phase 6)
+│   └── export_onnx.py     # produce the release artefact (Phase 8)
+│
+├── scripts/
+│   └── import_msinet_weights.py  # one-time TF→PyTorch weight port
+│
+├── tests/
+│   └── test_msinet_parity.py     # PyTorch-vs-TF numerical parity gate
 │
 ├── notebooks/
 │   └── prototype.ipynb    # "100 images, 2 epochs" sanity check
@@ -54,6 +60,7 @@ foveacast-training/
 ├── benchmark/
 │   └── screenshots/       # Foveacast's comparison set, for qualitative review
 │
+├── weights/               # gitignored; imported pretrained weights (.pt)
 └── runs/                  # gitignored; checkpoints + TensorBoard logs
 ```
 
@@ -67,7 +74,54 @@ uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e '.[training]'
 ```
 
+The extras groups are:
+
+- `[training]` — TensorBoard, tqdm, PyYAML. What you want for the fine-tune loop.
+- `[eval]` — SciPy, scikit-image. For the saliency metrics in Phase 6.
+- `[dev]` — Ruff, Jupyter, pytest. For development and running tests.
+- `[weights-import]` — TensorFlow, huggingface_hub. Only needed for the one-time weight port below.
+
+Install multiple at once by comma-separating: `.[training,eval,dev]`.
+
 Fetch the UEyes dataset (12.9 GB zip). Instructions in [`data/README.md`](data/README.md).
+
+## Import the pretrained MSI-Net weights
+
+A one-time step per contributor. Kroner's SALICON-pretrained MSI-Net ships as a TensorFlow SavedModel on [HuggingFace](https://huggingface.co/alexanderkroner/MSI-Net); the importer downloads that, walks its variables, and writes them out as a PyTorch `state_dict` that `foveacast_training.msinet.MSINet` can load with `strict=True`.
+
+```sh
+uv pip install --python .venv/bin/python -e '.[weights-import]'
+.venv/bin/python scripts/import_msinet_weights.py
+```
+
+The importer is idempotent: re-running it re-downloads nothing if the HF snapshot is cached, and re-writes the same `.pt` each time. Expected output:
+
+```
+→ Downloading HuggingFace SavedModel (alexanderkroner/MSI-Net)...
+→ Loading TF variables...
+→ Building PyTorch state_dict from N TF variables...
+✓ Wrote weights/msinet_salicon.pt (≈100 MB)
+→ Verifying by loading into MSINet with strict=True...
+  loaded 24,934,209 parameters
+  forward pass on (1, 3, 240, 320) → (1, 1, 240, 320), range [...]
+✓ Import complete.
+```
+
+If the variable ordering breaks on a newer HF revision, pass `--discover` to see the raw variable list and diagnose. The script writes nothing in that mode.
+
+After the import, the 500 MB TensorFlow install is no longer needed for anything else in this repo. Feel free to `uv pip uninstall tensorflow` afterwards if disk space is tight; the resulting `weights/msinet_salicon.pt` is all that subsequent phases depend on.
+
+## Tests
+
+```sh
+uv pip install --python .venv/bin/python -e '.[dev]'
+.venv/bin/pytest                          # the whole suite
+.venv/bin/pytest tests/test_msinet_parity.py -v -s    # just the parity test, verbose
+```
+
+Tests skip cleanly if their prerequisites aren't installed (e.g. the parity test skips when `[weights-import]` isn't available or `weights/msinet_salicon.pt` hasn't been imported), so a minimal install doesn't produce false failures.
+
+The current gate-closing test is `tests/test_msinet_parity.py` — it runs a fixed-seed random input through both the PyTorch port and Kroner's reference TF SavedModel, then asserts outputs match within `atol=1e-3, rtol=1e-3`. Mean / max / p99 absolute error are printed regardless of pass or fail so a commit that barely passes shows a visible regression signal.
 
 ## Reproduce the current release
 
