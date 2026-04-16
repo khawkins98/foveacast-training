@@ -24,9 +24,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Full training stack — add with `uv pip install -e '.[training]'`.
-# Split out so a lean "I just want to export the released checkpoint"
-# install stays lean.
+# Phase-5-and-beyond training conveniences. The Phase 4 prototype
+# (100 images, 2 epochs) uses none of these — its dependencies are
+# core `torch` + Pillow + numpy. This group is load-bearing only when
+# the full fine-tune, TensorBoard logging, and config-via-YAML flows
+# land.
 training = [
   "tqdm>=4.66",
   "tensorboard>=2.15",

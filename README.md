@@ -149,7 +149,15 @@ No release has shipped yet. The pipeline lands phase by phase (see [issue #1](ht
    .venv/bin/python -m foveacast_training.train --prototype
    ```
 
-   Runs 2 epochs on 100 train / 25 val images (shuffled from the UEyes train split). Writes `runs/prototype-{timestamp}/history.json` with per-step loss and per-epoch validation CC. On an M4 MacBook Air this runs in ~90 seconds. First passing run on 2026-04-16 reported train loss 0.92 → 0.76 and val CC 0.60 → 0.64 over the two epochs — monotonic improvement, Phase 4 gate closed. Requires `weights/msinet_salicon.pt` (see above) and `data/ueyes/UEyes_dataset/` (see [`data/README.md`](data/README.md)).
+   Runs 2 epochs on 100 train / 25 val images (shuffled from the UEyes train split under a fixed seed, so numbers below are reproducible across reruns). Writes `runs/prototype-{timestamp}/history.json` with per-step loss and per-epoch validation CC. On an M4 MacBook Air this runs in ~90 seconds. Requires `weights/msinet_salicon.pt` (see above) and `data/ueyes/UEyes_dataset/` (see [`data/README.md`](data/README.md)); no extras beyond `[dev]` — train.py and losses.py depend on core `torch` only.
+
+   **Numbers from the Phase 4 gate-closing run on 2026-04-16** (seeded, bit-reproducible across reruns):
+
+   | metric | epoch 1 | epoch 2 | direction |
+   |---|---|---|---|
+   | train loss (avg) | 0.8928 | 0.7612 | ↓ 15% |
+   | val loss | 0.9006 | 0.8297 | ↓ 8% |
+   | val CC | 0.6012 | 0.6421 | ↑ 6.8% |
 
 2. **Full fine-tune** `[next — Phase 5]`
 

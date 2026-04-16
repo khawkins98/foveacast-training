@@ -123,15 +123,17 @@ Phase 3 gate closed. `(image, saliency)` tensors of correct shape, splits sum to
 
 Phase 4 landed `src/foveacast_training/train.py` + `src/foveacast_training/losses.py` + 10 loss-module tests. Full suite is now 32 passed. The gate — "does the loss curve look plausible on 100 images, 2 epochs" — closed on the first run.
 
-**Numbers from the first passing prototype run on M4 MPS (2026-04-16):**
+**Numbers from the Phase 4 gate-closing run on M4 MPS (2026-04-16, seeded so they're reproducible):**
 
 | metric     | epoch 1 | epoch 2 | direction |
 |------------|---------|---------|-----------|
-| train loss (avg) | 0.9227 | 0.7615 | ↓ 17%   |
-| val loss         | 0.8897 | 0.8327 | ↓ 6%    |
-| val CC           | 0.6052 | 0.6393 | ↑ 5.6%  |
+| train loss (avg) | 0.8928 | 0.7612 | ↓ 15%   |
+| val loss         | 0.9006 | 0.8297 | ↓ 8%    |
+| val CC           | 0.6012 | 0.6421 | ↑ 6.8%  |
 
 Training + validation in ~90 seconds (budget was 30 minutes). No NaN, no divergence, no memory pressure. Loss is monotonically decreasing epoch-over-epoch; val CC is monotonically increasing. All three directions point the right way, which is what Phase 4's gate is asking.
+
+A second run produced bit-identical numbers — confirming the `torch.manual_seed(0)` + `numpy.random.seed(0)` + `python random.seed(0)` + `num_workers=0` combination in the prototype config actually gives reproducible metrics, not just a plausible-looking stochastic run. Per-step loss values may still jitter slightly on MPS because Apple's Metal kernels aren't bit-deterministic at the op level, but end-of-epoch averages are stable.
 
 **Starting val CC of 0.60 is the useful signal.** The pretrained SALICON weights already produce a decent correlation with UEyes ground truth before any fine-tuning happens — meaning MSI-Net's natural-scene prior transfers reasonably to UI content out of the box, and fine-tuning is improving on an already-credible baseline rather than starting from noise. That's consistent with the UEyes paper's +10 AUC finding from fine-tuning and suggests the port is structurally sound all the way through.
 

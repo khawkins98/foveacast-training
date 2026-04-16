@@ -58,7 +58,13 @@ PROTOTYPE_CONFIG: dict[str, object] = {
     "learning_rate": 1e-5,  # Kroner's SALICON default; no reduction for prototype
     "n_train": 100,
     "n_val": 25,
-    "num_workers": 2,
+    # why: num_workers=0 for the prototype keeps the run deterministic
+    # under a fixed seed. With workers>0 each fork randomises its own
+    # DataLoader state and prototype numbers drift between runs, which
+    # defeats the point of quoting the first-run values as a gate
+    # signal. Phase 5 tunes this for throughput.
+    "num_workers": 0,
+    "seed": 0,
 }
 
 FULL_CONFIG: dict[str, object] = {
@@ -68,6 +74,7 @@ FULL_CONFIG: dict[str, object] = {
     "n_train": None,         # full train set
     "n_val": None,           # full val set
     "num_workers": 4,
+    "seed": None,             # why: no per-run seeding for throughput in Phase 5
 }
 
 
@@ -102,6 +109,28 @@ def main() -> None:
     print(f"→ device: {device}")
     print(f"→ mode:   {mode_label}")
     print(f"→ config: {config}")
+
+    # why: FULL_CONFIG numbers are placeholder until Phase 5 tunes them.
+    # Loud warning rather than silent default so a contributor who runs
+    # without --prototype before Phase 5 lands knows what they're doing.
+    if not args.prototype:
+        print(
+            "⚠ FULL_CONFIG is placeholder until Phase 5. "
+            "Hyperparameters, best-checkpoint saving, LR schedule, and "
+            "early stopping have NOT been tuned for the full run."
+        )
+
+    # why: optional fixed-seed for reproducibility. Only the prototype
+    # config sets this; the full run leaves seed=None for throughput.
+    if config.get("seed") is not None:
+        import random
+
+        import numpy as np
+        seed = int(config["seed"])
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        print(f"→ seed:   {seed} (deterministic mode)")
 
     # Load model + weights.
     model = MSINet()

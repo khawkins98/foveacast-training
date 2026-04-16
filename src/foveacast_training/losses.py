@@ -53,6 +53,16 @@ def kl_divergence_saliency(
     # why: match Kroner's exact reduction axes — (1, 2, 3) in NCHW = channel
     # + H + W = everything but the batch dim. keepdim=True so the
     # broadcasting-divide gives a per-image normalisation.
+    #
+    # Degenerate-input note: if `target` is all-zero (extremely rare but
+    # possible on a blank ground-truth map), this divide makes `target` a
+    # tensor of zeros — the subsequent `target * log(...)` is then
+    # zero-everywhere and the loss is 0, not a uniform distribution as
+    # one might expect from a "normalise by sum" description. Phase 5's
+    # Dataset currently can't produce such a map (saliency values are
+    # [0, 1] by construction with at least one non-zero pixel per UEyes
+    # ground truth), so we don't guard against it. If that ever changes,
+    # the failure mode is "loss = 0 silently" rather than NaN.
     target_sum = target.sum(dim=(1, 2, 3), keepdim=True)
     target = target / (eps + target_sum)
 
