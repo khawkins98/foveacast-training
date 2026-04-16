@@ -41,11 +41,23 @@ eval = [
   "scikit-image>=0.22",
 ]
 
-# Developer conveniences — linters, formatters, notebook runner.
+# One-time cross-framework import of Kroner's pretrained MSI-Net weights
+# from the HuggingFace SavedModel. Installed only when running
+# scripts/import_msinet_weights.py; not needed for training or inference.
+# TF is a 500+ MB install — kept out of the core and the training set
+# deliberately so contributors who aren't importing weights don't pay
+# the cost.
+weights-import = [
+  "tensorflow>=2.15",
+  "huggingface_hub>=0.20",
+]
+
+# Developer conveniences — linters, formatters, notebook runner, test runner.
 dev = [
   "ruff>=0.5",
   "jupyter>=1.0",
   "ipykernel>=6.28",
+  "pytest>=8.0",
 ]
 
 [project.urls]
@@ -60,6 +72,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# why: addopts keeps CI-style output terse by default — verbose on demand
+# via `pytest -v`. Failing fast (`-x`) is tempting but counterproductive
+# when parity tests report multiple numerical stats we want to see.
+addopts = "-ra --strict-markers"
 
 [tool.ruff]
 line-length = 100
