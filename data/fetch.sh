@@ -45,14 +45,74 @@ cd "${DEST}"
 
 echo "→ Fetching ${ZIP_NAME} from Zenodo record ${ZENODO_RECORD}"
 echo "  destination: ${DEST}/${ZIP_NAME}"
-echo "  (12.9 GB — expect 15–60+ min depending on bandwidth)"
 
-# why: -L follows the 302 to Zenodo's storage backend; -C - resumes a
-# partial file so an interrupted run doesn't restart from zero; --fail
-# turns HTTP 4xx/5xx into non-zero exits instead of writing an error
-# page to disk; --retry handles transient blips without human babysitting.
-curl -L -C - --fail --retry 3 --retry-delay 5 \
-  -o "${ZIP_NAME}" "${URL}"
+# Preflight: ask Zenodo the total size so a resumed run can print a clearer
+# "resuming from X GB of Y GB" message. Non-fatal if this fails (offline, HEAD
+# not supported, etc.) — the download itself is the source of truth.
+#
+# why: curl's own progress meter resets its percent counter after -C -, which
+# reads as "1% of 3.6 GB remaining" even when we're 70% through the 12.9 GB
+# file. A one-line preflight up front is cheaper than explaining curl's meter.
+TOTAL_BYTES=$(curl -sIL --max-time 15 "${URL}" 2>/dev/null \
+  | grep -i '^content-length:' | tail -1 | awk '{print $2}' | tr -d '\r\n' \
+  || true)
+CURRENT_BYTES=0
+if [[ -f "${ZIP_NAME}" ]]; then
+  CURRENT_BYTES=$(wc -c < "${ZIP_NAME}" | tr -d ' ')
+fi
+
+if [[ -n "${TOTAL_BYTES}" && "${TOTAL_BYTES}" -gt 0 ]]; then
+  GB_TOTAL=$(( TOTAL_BYTES / 1000000000 ))
+  if [[ "${CURRENT_BYTES}" -gt 0 ]]; then
+    PCT=$(( CURRENT_BYTES * 100 / TOTAL_BYTES ))
+    GB_CURRENT=$(( CURRENT_BYTES / 1000000000 ))
+    echo "  resuming from ${GB_CURRENT} GB / ${GB_TOTAL} GB (${PCT}%)"
+  else
+    echo "  total size: ${GB_TOTAL} GB (expect 15–60+ min depending on bandwidth)"
+  fi
+else
+  echo "  (expect 15–60+ min depending on bandwidth)"
+fi
+
+# why: combined, these flags turn "stalls silently forever" into "retries
+# transparently." The flag that actually matters for Zenodo is
+# --retry-all-errors — Zenodo stalls look like transport-level failures, not
+# HTTP 5xx, so curl's default --retry doesn't fire on them. Without
+# --speed-limit/--speed-time, a stalled connection sits at 0 B/s until the
+# user notices and Ctrl-C's. With them, curl fails fast and the retry chain
+# kicks in.
+#   -L                  — follow Zenodo's 302 to the storage backend.
+#   -C -                — resume from the partial file if present.
+#   --fail              — HTTP 4xx/5xx becomes a non-zero exit instead of
+#                         writing an error page over the zip.
+#   --retry 5           — curl-level retries before the outer loop takes over.
+#   --retry-all-errors  — retry on transport errors too, not only 5xx.
+#   --retry-delay 10    — 10s between curl-level retries.
+#   --speed-limit 1024  — if throughput drops below 1 KB/s ...
+#   --speed-time 60     — ... for 60 consecutive seconds, abort the transfer
+#                         so --retry can resume from the partial file.
+#
+# The surrounding `until` loop is the outermost safety net: if curl exhausts
+# its five retries, we restart it from scratch. The download is still
+# idempotent thanks to -C -.
+max_tries=8
+tries=0
+until curl -L -C - --fail \
+        --retry 5 --retry-delay 10 --retry-all-errors \
+        --speed-limit 1024 --speed-time 60 \
+        -o "${ZIP_NAME}" "${URL}"; do
+  tries=$((tries + 1))
+  if [[ ${tries} -ge ${max_tries} ]]; then
+    echo "" >&2
+    echo "error: curl failed ${tries} consecutive times, giving up" >&2
+    echo "       partial file preserved at ${DEST}/${ZIP_NAME} — rerun when ready" >&2
+    exit 1
+  fi
+  echo "" >&2
+  echo "  curl exited non-zero (outer attempt ${tries}/${max_tries}) —" \
+       "sleeping 15s then resuming" >&2
+  sleep 15
+done
 
 # --- Verify -----------------------------------------------------------------
 
