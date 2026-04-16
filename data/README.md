@@ -6,17 +6,30 @@ This folder is where the UEyes dataset goes after you fetch it. The data itself 
 
 The UEyes dataset is hosted on Zenodo at [record 8010312](https://zenodo.org/records/8010312) under Creative Commons Attribution 4.0 International. A single `UEyes_dataset.zip` file.
 
-A convenience script will live at `data/fetch.sh` when the training code lands. Until then, fetch manually:
+Use the helper script from the repo root:
 
 ```sh
-# From the repo root:
-mkdir -p data/ueyes
-cd data/ueyes
-curl -L -o UEyes_dataset.zip "https://zenodo.org/records/8010312/files/UEyes_dataset.zip?download=1"
-unzip UEyes_dataset.zip
+bash data/fetch.sh
 ```
 
-The unzipped layout and any preprocessing specifics will be documented here once the `ueyes_dataset.py` loader lands and I know exactly what shape the files come in.
+The script downloads the zip into `data/ueyes/`, verifies the archive with `unzip -t`, extracts in place, and prints a depth-2 directory listing you can paste back if `data/README.md` needs updating. It is idempotent and resumable — a partial download picks up from where it stopped; a completed extraction is a no-op.
+
+Useful environment variables:
+
+- `FETCH_SKIP_UNZIP=1` — download only, leave the zip on disk. Handy if you want to archive the raw deposit somewhere before extracting.
+- `FETCH_DEST=/some/path` — extract somewhere other than `data/ueyes/` (useful if your repo lives on a small SSD and the dataset lives on external storage).
+
+Prerequisites: `curl` and `unzip` on `PATH`. Both ship with macOS and every mainstream Linux.
+
+If you would rather fetch by hand — network restrictions, a download manager, whatever — the equivalent manual steps are:
+
+```sh
+mkdir -p data/ueyes
+cd data/ueyes
+curl -L -C - -o UEyes_dataset.zip \
+  "https://zenodo.org/records/8010312/files/UEyes_dataset.zip?download=1"
+unzip UEyes_dataset.zip
+```
 
 ## What's in the dataset
 
@@ -25,6 +38,89 @@ From the Zenodo record and the [CHI 2023 paper](https://doi.org/10.1145/3544548.
 - 1,980 UI screenshots spanning four types: webpage, desktop UI, mobile UI, and poster.
 - Eye-tracking data from 62 participants.
 - Ground-truth saliency maps derived from participant fixations.
+
+## Verified directory layout
+
+Observed on 2026-04-16 after unpacking `UEyes_dataset.zip` (Zenodo record 8010312, sha of the deposit as shipped on that date). `UEyes_dataset/` is the single top-level folder; `__MACOSX/` and `.DS_Store` next to it are macOS zip cruft and are safe to delete (they are inside `data/ueyes/` which is gitignored anyway).
+
+```
+UEyes_dataset/
+├── README.md                         # upstream-authored; refers to info.csv — see note below
+├── image_types.csv                   # 1,980 rows, CRLF line endings, ';' delimiter
+├── images/                           # 1,980 UI screenshots, mixed .png/.jpg/.jpeg
+├── eyetracker_logs/                  # 554 raw Gazepoint fixation CSVs
+├── saliency_maps/
+│   ├── fixmaps_1s/                   # 1,980 — binary fixation maps at 1s duration
+│   ├── fixmaps_3s/                   # 1,980 — …at 3s
+│   ├── fixmaps_7s/                   # 1,980 — …at 7s
+│   ├── heatmaps_1s/                  # 1,980 — Gaussian-smoothed saliency heatmaps
+│   ├── heatmaps_3s/                  # 1,980
+│   ├── heatmaps_7s/                  # 1,980
+│   ├── overlay_heatmaps_1s/          # 1,980 — heatmap composited over the source image;
+│   ├── overlay_heatmaps_3s/          #          filenames prefixed 'overlay_' (irregular!)
+│   └── overlay_heatmaps_7s/          # 1,980
+└── scanpaths/
+    ├── paths_1s/                     # 1,980 per-image subfolders
+    ├── paths_3s/                     #   each contains N.png for participant N
+    └── paths_7s/                     #   (3–24 participants per image)
+```
+
+### Counts and shapes
+
+- **1,980 source images** across four equally-sized categories:
+
+  | Category | Count |
+  |----------|------:|
+  | desktop  | 495   |
+  | mobile   | 495   |
+  | poster   | 495   |
+  | web      | 495   |
+
+  Note the category label is `web`, not `webpage` as the paper's abstract phrases it.
+
+- **File formats are mixed in all ground-truth folders:** 1,283 `.png`, 695 `.jpg`, 2 `.jpeg`. Saliency-map filenames exactly mirror the source image filenames — an image `foo.png` has `saliency_maps/heatmaps_1s/foo.png`, `saliency_maps/fixmaps_1s/foo.png`, etc. **Exception:** the `overlay_heatmaps_*` subfolders prefix every filename with `overlay_`, so `foo.png` there is `overlay_foo.png`. The Dataset loader needs to know this.
+- **Image dimensions are wildly heterogeneous.** Observed range 237×260 up to 5,636×5,130; mean around 1,089×1,104. Aspect ratios are all over the place. A tiny number of images load as `mode=L` (grayscale) rather than `RGB` — the loader has to coerce.
+- **Per-image participant coverage in `scanpaths/` ranges 3–24** with mode 7–12. This is long-tailed — one pass of eye-tracking per participant per image, attrition accounts for the low end, extra blocks for the high end.
+- **`eyetracker_logs/` contains 554 raw Gazepoint fixation CSVs** named `{BB}_kh{PPP}_fixations.csv` (block × participant). The column format is documented upstream at https://www.gazept.com/dl/Gazepoint_API_v2.0.pdf — we probably don't need these for MSI-Net fine-tuning (the aggregated `saliency_maps/` is the training target), but they're available if Phase 5 or a later phase wants finer-grained supervision.
+
+### Train / test split
+
+`image_types.csv` gives an upstream-defined split:
+
+- **Train:** 1,872 images (~94.5%)
+- **Test:** 108 images (~5.5%)
+
+Columns: `Image Name;Category;Block;Train/Test`. Header line present. CRLF line endings — load with `newline=''` or strip `\r` on read. The 1,980 filenames in the CSV exactly match the files in `images/` (zero orphans either direction, verified with `comm`).
+
+**No validation set is provided.** Carving a validation split from the 1,872 train images is a Phase 3 loader responsibility. Recommended: hold out ~10% of train (~187 images), stratified by category so all four UI types are represented; use a fixed random seed so the split is reproducible across runs.
+
+### Upstream documentation drift
+
+The upstream `UEyes_dataset/README.md` refers to a file called `info.csv`. The file that actually ships in the deposit is `image_types.csv` — same columns, just a different name. Not a problem, but the loader code should key on `image_types.csv` and a comment should note the rename so future readers don't wonder.
+
+### Choices deferred to Phase 3 (dataset loader)
+
+The multi-variant ground truth (`fixmaps` vs `heatmaps` vs `overlay_heatmaps` × `1s` vs `3s` vs `7s`) means Phase 3 has to pick:
+
+- **Which saliency-map variant is the training target?** `heatmaps_*` (Gaussian-smoothed continuous maps) is the conventional choice for saliency-prediction fine-tuning; `fixmaps_*` are binary. `overlay_*` are for human inspection, not training.
+- **Which duration?** 1s = first-glance attention, 3s = early exploration, 7s = full viewing. Kroner's MSI-Net was trained on SALICON, whose ground truth is aggregated over roughly 5s of mouse-as-gaze data per image. `heatmaps_3s` is probably the closest analogue; worth confirming once Phase 1's substrate decision lands.
+- **Validation-set strategy.** Stratified hold-out from train, seed-pinned.
+
+These are logged here rather than chosen now — the issue #1 gate for Phase 0 is "know the shape of inputs and ground truths," not "commit to every loader decision."
+
+### Disk usage note
+
+After a successful run, `data/ueyes/` holds:
+- ~13 GB for `UEyes_dataset.zip` (kept in place so `data/fetch.sh` re-runs are no-ops; safe to delete after confirming extraction worked)
+- ~12 GB for the unpacked `UEyes_dataset/` tree
+
+Roughly 25 GB on disk. If space is tight, delete the zip after verification:
+
+```sh
+rm data/ueyes/UEyes_dataset.zip
+```
+
+A re-run of `data/fetch.sh` is a fast no-op if the unpacked tree is present (sentinel file: `UEyes_dataset/image_types.csv`). If the tree is missing but the zip is, the script skips the download and goes straight to extraction. Set `FETCH_FORCE=1` to force a clean redownload and re-extract.
 
 ## Licence and attribution
 
