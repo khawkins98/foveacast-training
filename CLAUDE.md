@@ -16,6 +16,7 @@ Read these before making substantive changes:
 
 - [README.md](README.md) — what the repo is for, how to set it up, how to reproduce.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — end-to-end pipeline shape, module responsibilities, the `.onnx` contract with Foveacast, and the phase map. Start here if you are about to touch anything inside `src/foveacast_training/`.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — PR workflow and the documentation-lockstep checklist. The checklist is load-bearing; do not open a PR that adds a module without running through it.
 - [LEARNINGS.md](LEARNINGS.md) — dated prose log of decisions and dead ends. Check this before re-deriving something.
 - [issue #1](https://github.com/khawkins98/foveacast-training/issues/1) — phased plan from fetch-dataset to integration-PR. The handoff brief for anyone (human or LLM) starting work on this repo.
 - Foveacast's [LEARNINGS.md](https://github.com/khawkins98/Foveacast/blob/main/LEARNINGS.md) — the upstream trajectory that explains *why this repo exists at all*. The 2026-04-16 entries on model survey, UMSI++ correction, and companion-repo split are the load-bearing ones.
@@ -110,13 +111,7 @@ Issue #1 splits V3 into 10 phases with explicit gates. Each phase lands as its o
 
 ### Documentation lockstep
 
-When your change is not purely internal, check each of these:
-
-- **README.md** — if you added a command, flag, dependency, or supported device.
-- **LEARNINGS.md** — any decision worth keeping for the next contributor.
-- **data/README.md** — anything about the UEyes dataset's layout, split, or preprocessing.
-- **CITATION.cff** — if you added a new cited work.
-- **issue #1** — tick the phase checkbox when it's genuinely done (artefact produced, gate passed).
+Run the pre-PR checklist in [`CONTRIBUTING.md`](CONTRIBUTING.md#the-documentation-lockstep) before marking a PR ready. It is the single source of truth for which files to touch when — ARCHITECTURE, LEARNINGS, README, data/README, CLAUDE, CITATION, issue #1. Prior reviewer passes found real gaps on Phases 2 and 3 that the checklist now catches pre-merge.
 
 ### Risky actions — confirm first
 

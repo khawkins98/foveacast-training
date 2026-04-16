@@ -12,7 +12,7 @@ The fix is not swapping to yet another natural-scene-trained model. The fix is t
 
 The longer-form history — V1 build, V2 ONNX spike, the ground-truth benchmark that exposed the SALICON limitation, the wider model survey, the pivot from a UMSI++ drop-in to this fine-tuning approach — lives in Foveacast's [`LEARNINGS.md`](https://github.com/khawkins98/Foveacast/blob/main/LEARNINGS.md). Read that first if the project's trajectory matters to what you're trying to do here.
 
-For the end-to-end shape of the pipeline in *this* repo — what each module does, how the two repos fit together, and the contract on the `.onnx` artefact Foveacast consumes — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+For the end-to-end shape of the pipeline in *this* repo — what each module does, how the two repos fit together, and the contract on the `.onnx` artefact Foveacast consumes — see [`ARCHITECTURE.md`](ARCHITECTURE.md). If you're about to open a PR, [`CONTRIBUTING.md`](CONTRIBUTING.md) has the workflow conventions and a docs-lockstep checklist to run through before marking it ready.
 
 ## Attribution chain
 
@@ -30,6 +30,7 @@ This repo itself is MIT-licensed (see [LICENSE](LICENSE)). The trained model art
 foveacast-training/
 ├── README.md              # this file
 ├── ARCHITECTURE.md        # end-to-end shape of the pipeline + .onnx contract with Foveacast
+├── CONTRIBUTING.md        # PR workflow + docs-lockstep checklist (read before opening a PR)
 ├── LEARNINGS.md           # dated prose log of decisions and dead ends
 ├── CLAUDE.md              # conventions for AI assistants working in the repo
 ├── LICENSE                # MIT, Ken Hawkins
