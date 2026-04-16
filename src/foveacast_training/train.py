@@ -65,6 +65,18 @@ PROTOTYPE_CONFIG: dict[str, object] = {
     # signal. Phase 5 tunes this for throughput.
     "num_workers": 0,
     "seed": 0,
+    # Phase 5 safety machinery: all disabled for the prototype. Grad
+    # clipping is off so the Phase 4 gate numbers stay frozen — adding
+    # clipping changes the gradient updates and shifts the reported
+    # metrics slightly (seen in #11 PR review), which would invalidate
+    # the quoted "gate closed at these numbers" baseline. Prototype is a
+    # frozen sanity check; Phase 5 is where the safety machinery exercises.
+    "grad_clip": None,             # None disables
+    "lr_plateau_factor": None,     # None disables the scheduler
+    "lr_plateau_patience": None,
+    "early_stop_patience": None,   # None disables early stopping
+    "early_stop_min_delta": 0.0,
+    "save_best_checkpoint": False, # prototype is a sanity run; no artefacts needed
 }
 
 FULL_CONFIG: dict[str, object] = {
@@ -73,17 +85,45 @@ FULL_CONFIG: dict[str, object] = {
     "learning_rate": 1e-6,  # 10× reduction from paper default for fine-tuning
     "n_train": None,         # full train set
     "n_val": None,           # full val set
-    "num_workers": 4,
+    # why: num_workers=0 as the first-run default for --full. PyTorch
+    # DataLoader with num_workers>0 on MPS is a known foot-gun — fork+
+    # unpickleable MPS state can hang silently at epoch 1 step 0 of a
+    # 4-hour run. num_workers=0 is guaranteed safe; the maintainer can
+    # bump to 2 or 4 after a 1-epoch smoke confirms no hang, if the
+    # first real run turns out I/O-bound. At batch_size=8 on UEyes
+    # (~211 steps/epoch × 30 epochs) the expected floor is well inside
+    # the 4-hour budget anyway.
+    "num_workers": 0,
     "seed": None,             # why: no per-run seeding for throughput in Phase 5
+    # Phase 5 safety machinery: all on. These defaults are the "safe first
+    # run" numbers; #11 tracks tuning them empirically once we have signal
+    # from an actual full fine-tune.
+    "grad_clip": 1.0,              # clips gradient norm per step
+    "lr_plateau_factor": 0.5,      # halve LR on val-CC plateau
+    "lr_plateau_patience": 3,      # epochs of no improvement before LR drop
+    "early_stop_patience": 5,      # epochs of no improvement before stopping
+    "early_stop_min_delta": 1e-4,  # minimum val CC improvement to count as progress
+    "save_best_checkpoint": True,  # write best.pt + best.json on every val-CC improvement
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    mode_group.add_argument(
         "--prototype",
         action="store_true",
         help="Phase 4 sanity run: 100 train / 25 val, 2 epochs, ~minutes on MPS.",
+    )
+    # why: --full is an explicit opt-in rather than the default. Running
+    # FULL_CONFIG is a 4-hour commitment on M4 MPS; forcing a flag avoids
+    # the "oh I forgot --prototype" failure mode that turns an intended
+    # sanity run into an overnight fine-tune against untuned
+    # hyperparameters.
+    mode_group.add_argument(
+        "--full",
+        action="store_true",
+        help="Phase 5 full fine-tune: 1,684 train, 30 epochs, hours. Writes best.pt.",
     )
     parser.add_argument(
         "--data-root",
@@ -110,14 +150,17 @@ def main() -> None:
     print(f"→ mode:   {mode_label}")
     print(f"→ config: {config}")
 
-    # why: FULL_CONFIG numbers are placeholder until Phase 5 tunes them.
-    # Loud warning rather than silent default so a contributor who runs
-    # without --prototype before Phase 5 lands knows what they're doing.
-    if not args.prototype:
+    # why: FULL_CONFIG numbers are placeholder until the first real Phase
+    # 5 run tunes them empirically. Loud warning rather than silent default
+    # so a contributor who opts into --full before that tuning happens
+    # knows what they're signing up for.
+    if args.full:
         print(
-            "⚠ FULL_CONFIG is placeholder until Phase 5. "
-            "Hyperparameters, best-checkpoint saving, LR schedule, and "
-            "early stopping have NOT been tuned for the full run."
+            "⚠ FULL_CONFIG hyperparameters are placeholder until Phase 5. "
+            "Safety machinery (grad clip, LR scheduler, early stop, best-"
+            "checkpoint saving) IS in place, but the learning rate, epoch "
+            "count, and batch size have not been tuned empirically yet. "
+            "Your first run is effectively a hyperparameter probe."
         )
 
     # why: optional fixed-seed for reproducibility. Only the prototype
@@ -164,6 +207,18 @@ def main() -> None:
 
     optimizer = torch.optim.Adam(model.parameters(), lr=config["learning_rate"])
 
+    # why: ReduceLROnPlateau on validation CC. mode='max' because higher
+    # CC is better. Disabled by passing factor=None; in that case we
+    # keep `scheduler = None` and skip the .step() call at val time.
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None
+    if config["lr_plateau_factor"] is not None:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="max",
+            factor=config["lr_plateau_factor"],
+            patience=config["lr_plateau_patience"],
+        )
+
     # Output dir + history record.
     if args.out_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -179,7 +234,15 @@ def main() -> None:
         "train_loss_per_step": [],
         "val_loss_per_epoch": [],
         "val_cc_per_epoch": [],
+        "lr_per_epoch": [],
+        "best_val_cc": None,
+        "best_epoch": None,
+        "stopped_early_at_epoch": None,
     }
+
+    # Best-checkpoint + early-stopping tracking.
+    best_val_cc = float("-inf")
+    epochs_since_improvement = 0
 
     print(f"→ output: {out_dir}")
     print("──" * 30)
@@ -196,6 +259,15 @@ def main() -> None:
 
             optimizer.zero_grad()
             loss.backward()
+            # why: gradient clipping protects against a single-batch loss
+            # spike silently corrupting the best checkpoint in a long run.
+            # Disabled in the prototype because 50 steps is not enough
+            # to benefit.
+            if config["grad_clip"] is not None:
+                torch.nn.utils.clip_grad_norm_(
+                    model.parameters(),
+                    max_norm=config["grad_clip"],
+                )
             optimizer.step()
 
             loss_val = loss.item()
@@ -224,18 +296,74 @@ def main() -> None:
         train_loss = sum(epoch_train_losses) / len(epoch_train_losses)
         val_loss = sum(val_losses) / len(val_losses)
         val_cc = sum(val_ccs) / len(val_ccs)
+        current_lr = optimizer.param_groups[0]["lr"]
         history["val_loss_per_epoch"].append(val_loss)
         history["val_cc_per_epoch"].append(val_cc)
+        history["lr_per_epoch"].append(current_lr)
+
+        # Best-checkpoint saving.
+        improved = val_cc > best_val_cc + config["early_stop_min_delta"]
+        if improved:
+            best_val_cc = val_cc
+            epochs_since_improvement = 0
+            history["best_val_cc"] = best_val_cc
+            history["best_epoch"] = epoch
+            if config["save_best_checkpoint"]:
+                torch.save(model.state_dict(), out_dir / "best.pt")
+                (out_dir / "best.json").write_text(
+                    json.dumps(
+                        {
+                            "epoch": epoch,
+                            "val_cc": val_cc,
+                            "val_loss": val_loss,
+                            "train_loss": train_loss,
+                            "learning_rate": current_lr,
+                        },
+                        indent=2,
+                    )
+                )
+        else:
+            epochs_since_improvement += 1
+
+        # LR scheduler step (after val, on CC).
+        if scheduler is not None:
+            scheduler.step(val_cc)
+
+        improvement_marker = " ★ new best" if improved else ""
         print(
             f"epoch {epoch}/{config['n_epochs']}  "
             f"train_loss={train_loss:.4f}  "
             f"val_loss={val_loss:.4f}  "
-            f"val_cc={val_cc:.4f}"
+            f"val_cc={val_cc:.4f}  "
+            f"lr={current_lr:.2e}{improvement_marker}"
         )
         print("──" * 30)
 
+        # Early stopping.
+        if (
+            config["early_stop_patience"] is not None
+            and epochs_since_improvement >= config["early_stop_patience"]
+        ):
+            print(
+                f"✓ early stop: val CC hasn't improved by "
+                f"{config['early_stop_min_delta']} in "
+                f"{config['early_stop_patience']} epochs."
+            )
+            history["stopped_early_at_epoch"] = epoch
+            break
+
+    # Always save a final snapshot of weights too — useful for debugging
+    # if the best.pt checkpoint looks wrong.
+    if config["save_best_checkpoint"]:
+        torch.save(model.state_dict(), out_dir / "final.pt")
+
     (out_dir / "history.json").write_text(json.dumps(history, indent=2))
     print(f"✓ wrote {out_dir / 'history.json'}")
+    if history["best_epoch"] is not None:
+        print(
+            f"  best val_cc={history['best_val_cc']:.4f} at epoch "
+            f"{history['best_epoch']}  →  {out_dir / 'best.pt'}"
+        )
 
     # Sanity signal for the Phase 4 gate. Does NOT fail the run; surfaces
     # the answer in stdout so a human (or CI) can act on it.

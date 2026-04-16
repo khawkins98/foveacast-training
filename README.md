@@ -159,13 +159,13 @@ No release has shipped yet. The pipeline lands phase by phase (see [issue #1](ht
    | val loss | 0.9006 | 0.8297 | ↓ 8% |
    | val CC | 0.6012 | 0.6421 | ↑ 6.8% |
 
-2. **Full fine-tune** `[next — Phase 5]`
+2. **Full fine-tune** `[partially landed — hyperparameters tunable in Phase 5]`
 
    ```sh
-   .venv/bin/python -m foveacast_training.train
+   .venv/bin/python -m foveacast_training.train --full
    ```
 
-   Drops the `--prototype` flag and runs the full 1,684-image train set for the epoch count in `FULL_CONFIG`. Phase 5 will tune learning rate, early stopping, and best-checkpoint saving; the defaults in `src/foveacast_training/train.py` are placeholder until that phase lands.
+   Explicit `--full` flag required — no default mode — so it's not possible to accidentally kick off a 4-hour fine-tune by forgetting `--prototype`. Runs the full 1,684-image train set for the epoch count in `FULL_CONFIG`, with gradient clipping, best-checkpoint saving (on validation CC), ReduceLROnPlateau, and early stopping all wired up. The safety machinery landed ahead of Phase 5 (see #11); the *hyperparameters* in `FULL_CONFIG` (learning rate 1e-6, 30 epochs, batch 8) are still placeholder until an empirical tuning run. The CLI prints a loud warning to that effect. Writes `runs/full-{timestamp}/{best.pt,final.pt,history.json,best.json}`.
 
 3. **Evaluate** `[later — Phase 6]`
 
