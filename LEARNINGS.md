@@ -29,3 +29,17 @@ A few small decisions worth recording before the training code starts landing.
 **No CI yet.** For a research repo with one maintainer, a CI workflow would mostly be performative. Deferring until there is something specific worth testing automatically (e.g. the ONNX export step, which does have a contract Foveacast depends on).
 
 **No LFS for the dataset.** UEyes is 12.9 GB zipped. Git LFS is the wrong tool for research datasets at this size — expensive, slow, not what LFS is designed for. The dataset gets fetched via `data/fetch.sh` from Zenodo, lives outside the repo in a gitignored folder, and the repo just carries the fetch instructions.
+
+## 2026-04-16 — Phase 0 kickoff: scripted fetch and a CLAUDE.md
+
+Starting on [issue #1](https://github.com/khawkins98/foveacast-training/issues/1)'s phased plan. First branch is narrow by design: add a repeatable UEyes fetcher, a CLAUDE.md so future sessions load the right conventions, and the scaffolding around it. No model code, no loader, no training — just the groundwork for closing Phase 0's gate ("we should know the exact shape of inputs and ground truths before writing a loader for them").
+
+**Scripted fetch instead of manual curl.** The original `data/README.md` walked a human through `mkdir && curl && unzip`. Replacing that with `data/fetch.sh` costs a few lines and buys three things: resume support (`curl -C -`) on a 13 GB download that will get interrupted at least once; idempotent re-runs so a contributor doesn't have to remember whether they already unzipped; and a depth-2 tree dump at the end that Phase 0 can paste straight into the README's "Verified directory layout" section. The manual instructions stay in the README as a fallback.
+
+**Why not fetch in CI?** The dataset is too large to put through CI even once, and this repo has no CI yet anyway. A local script is the right shape.
+
+**Device target: MPS first.** Primary dev machine is an M4 MacBook Air. Training code will auto-detect (`mps → cuda → cpu`) but the proving ground is MPS. CUDA should work for anyone on a GPU box but is not the test bed. Captured as a convention in the new CLAUDE.md with the detection snippet inlined so it's not up for rediscussion every time.
+
+**CLAUDE.md adapted from Foveacast's.** Foveacast's [`CLAUDE.md`](https://github.com/khawkins98/Foveacast/blob/main/CLAUDE.md) is several months of accumulated convention; forking it for a Python research repo was cheaper than writing from scratch. Dropped the JS/browser-specific sections (layer discipline, tfjs, heatmap.js, Vite, accessibility) and added the pieces this repo actually needs: attribution as a hard rule, MPS-first, extras-split dependency discipline, LEARNINGS-as-workflow, one-phase-per-PR. Humanizer, commit hygiene, co-author trailer, review-not-fix — all carried over unchanged.
+
+**Open decisions parked.** Issue #1 flags four: port MSI-Net to PyTorch vs vendor Keras, input resolution, train/val/test split, device. None block Phase 0. All four will need answers before Phase 1 starts, which is why they live on a separate note rather than getting decided here.
