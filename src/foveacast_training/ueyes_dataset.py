@@ -23,7 +23,7 @@ Design decisions landed here (documented in LEARNINGS.md 2026-04-16 Phase 3):
       are for visualisation only. Configurable via the `saliency_variant`
       constructor argument so Phase 6 can compare.
     * Validation split: stratified by category, 10% of the upstream train
-      set (~187 images, 47 per category), fixed seed. The upstream deposit
+      set (188 images, 47 per category), fixed seed. The upstream deposit
       provides only a train/test split; val is our construction.
     * Preprocessing: aspect-ratio-preserving resize via PIL BICUBIC, then
       symmetric pad to `(240, 320)`. Padding value 126 for stimulus images
@@ -79,6 +79,18 @@ _SPLIT_CSV_NAME = "image_types.csv"
 # split CSV during Phase 0. Captured so stratified splitting can enumerate
 # them without re-scanning the CSV.
 _CATEGORIES = ("desktop", "mobile", "poster", "web")
+
+# Valid saliency variants, derived from the upstream deposit's
+# saliency_maps/ subdirectory layout (see data/README.md). Training should
+# use a `heatmaps_*` or `fixmaps_*` variant; `overlay_heatmaps_*` is
+# composited RGB intended for human visualisation and is not useful as
+# training ground truth, but we still allow it because Phase 6 may want
+# it for qualitative comparison.
+VALID_SALIENCY_VARIANTS: tuple[str, ...] = (
+    "fixmaps_1s", "fixmaps_3s", "fixmaps_7s",
+    "heatmaps_1s", "heatmaps_3s", "heatmaps_7s",
+    "overlay_heatmaps_1s", "overlay_heatmaps_3s", "overlay_heatmaps_7s",
+)
 
 
 @dataclass(frozen=True)
@@ -248,7 +260,11 @@ def _preprocess_stimulus(path: Path, target_size: tuple[int, int]) -> torch.Tens
     padded = _pad_to(resized, target_size[0], target_size[1], STIMULUS_PAD_VALUE)
     # HWC → CHW, cast to float32. Values stay in [0, 255] — MSINet's input
     # contract handles mean subtraction internally.
-    chw = np.transpose(padded, (2, 0, 1))
+    # why: np.ascontiguousarray makes the load-bearing contiguous layout
+    # explicit rather than a coincidence of the subsequent astype()
+    # returning a fresh buffer. Some downstream ops (ONNX export tracing,
+    # any .view() call) require contiguous input and fail loudly otherwise.
+    chw = np.ascontiguousarray(np.transpose(padded, (2, 0, 1)))
     return torch.from_numpy(chw.astype(np.float32))
 
 
@@ -261,6 +277,14 @@ def _preprocess_saliency(path: Path, target_size: tuple[int, int]) -> torch.Tens
         # PNGs/JPGs. Unconditional 'L' convert handles any stray mode
         # (e.g. re-exported as RGB by some tool) by averaging channels.
         arr = np.array(im.convert("L"), dtype=np.uint8)
+    # why: assert the uint8 assumption — the division by 255 below is only
+    # correct for uint8 inputs. If a future re-deposit ships 16-bit or
+    # float-valued saliency maps, silently dividing by 255 would produce
+    # near-zero outputs; fail loudly instead.
+    assert arr.dtype == np.uint8, (
+        f"saliency map at {path} has dtype {arr.dtype}, expected uint8 — "
+        "the /255 normalisation below assumes 8-bit input"
+    )
 
     resized = _resize_with_aspect(arr, target_size[0], target_size[1])
     padded = _pad_to(resized, target_size[0], target_size[1], SALIENCY_PAD_VALUE)
@@ -268,7 +292,7 @@ def _preprocess_saliency(path: Path, target_size: tuple[int, int]) -> torch.Tens
     # why: [0, 1] matches MSINet's output range (which is min-max-normalised
     # per image); the training loop's loss can re-normalise to sum-to-1 if
     # KL divergence is used.
-    chw = padded[np.newaxis, :, :]
+    chw = np.ascontiguousarray(padded[np.newaxis, :, :])
     return torch.from_numpy(chw.astype(np.float32) / 255.0)
 
 
@@ -316,6 +340,20 @@ class UEyesDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
 
         if split not in ("train", "val", "test"):
             raise ValueError(f"split must be train|val|test, got {split!r}")
+        if saliency_variant not in VALID_SALIENCY_VARIANTS:
+            raise ValueError(
+                f"saliency_variant must be one of {VALID_SALIENCY_VARIANTS}, "
+                f"got {saliency_variant!r}"
+            )
+        # why: val_fraction validated even when split == 'test' because its
+        # value affects how train/val are drawn, and a caller who pins
+        # val_fraction once and reuses it across splits expects consistent
+        # behaviour. Strict (0, 1) — 0 would give an empty val, 1 would
+        # empty train.
+        if not 0.0 < val_fraction < 1.0:
+            raise ValueError(
+                f"val_fraction must be in (0.0, 1.0) exclusive, got {val_fraction!r}"
+            )
 
         csv_path = self.root / _SPLIT_CSV_NAME
         if not csv_path.is_file():
@@ -373,3 +411,10 @@ class UEyesDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
         'poster' | 'web') in the same order as `filenames()`.
         """
         return [r.category for r in self._rows]
+
+    def __repr__(self) -> str:
+        return (
+            f"UEyesDataset(root={str(self.root)!r}, split={self.split!r}, "
+            f"n={len(self)}, variant={self.saliency_variant!r}, "
+            f"input_size={self.input_size})"
+        )

@@ -199,14 +199,62 @@ def test_unknown_split_rejected(ueyes_root):
         UEyesDataset(ueyes_root, split="validation")  # type: ignore[arg-type]
 
 
-def test_missing_saliency_variant_rejected(ueyes_root):
-    with pytest.raises(FileNotFoundError):
-        UEyesDataset(ueyes_root, split="val", saliency_variant="heatmaps_42s")
+def test_invalid_saliency_variant_rejected(ueyes_root):
+    """A typo or unknown variant is caught by the enum check, not by
+    stumbling into a FileNotFoundError on a path the user didn't name.
+    """
+    with pytest.raises(ValueError, match="saliency_variant must be one of"):
+        UEyesDataset(ueyes_root, split="val", saliency_variant="heatmap_3s")
+
+
+def test_val_fraction_bounds_rejected(ueyes_root):
+    """val_fraction must be strictly in (0.0, 1.0). Catches typos like
+    `val_fraction: 10` (meant 10%) and obvious nonsense like negatives.
+    """
+    for bad in (1.5, 0.0, 1.0, -0.1):
+        with pytest.raises(ValueError, match="val_fraction must be"):
+            UEyesDataset(ueyes_root, split="val", val_fraction=bad)
 
 
 def test_missing_root_rejected(tmp_path):
     with pytest.raises(FileNotFoundError):
         UEyesDataset(tmp_path / "does-not-exist", split="val")
+
+
+# ---------- smaller guarantees that Phase 4 will rely on -------------------
+
+
+def test_sample_tensors_are_contiguous(train_ds):
+    """PyTorch collate and ONNX tracing both want contiguous tensors.
+    Guards against someone silently dropping the np.ascontiguousarray call
+    in _preprocess_stimulus / _preprocess_saliency.
+    """
+    image, saliency = train_ds[0]
+    assert image.is_contiguous()
+    assert saliency.is_contiguous()
+
+
+def test_dataset_is_pickleable(val_ds):
+    """num_workers>0 in DataLoader forks and pickles the Dataset. A future
+    edit that stashes an open file handle or a TF session on self would
+    break this. Test catches it up front.
+    """
+    import pickle
+
+    blob = pickle.dumps(val_ds)
+    restored = pickle.loads(blob)
+    assert restored.filenames() == val_ds.filenames()
+    assert len(restored) == len(val_ds)
+
+
+def test_repr_is_informative(val_ds):
+    text = repr(val_ds)
+    # Not a strict format — just confirm the four load-bearing pieces are
+    # visible. TensorBoard run names will splice this in.
+    assert "UEyesDataset" in text
+    assert "split='val'" in text
+    assert "n=188" in text
+    assert "heatmaps_3s" in text
 
 
 # ---------- unit tests for helpers ----------------------------------------
