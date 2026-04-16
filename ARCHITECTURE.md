@@ -37,7 +37,7 @@ flowchart TD
         TRAIN["train.py<br/><i>Phase 4 landed · Phase 5 full</i>"]
         CKPT["runs/&lt;name&gt;/best.pt<br/><i>gitignored</i>"]
         EVAL["eval.py<br/><i>Phase 6</i>"]
-        EXPORT["export_onnx.py<br/><i>Phase 8</i>"]
+        EXPORT["export_onnx.py<br/><i>landed</i>"]
         ARTEFACT["releases/foveacast-v3.onnx<br/><i>Phase 9</i>"]
     end
 
@@ -78,7 +78,7 @@ The `src/foveacast_training/` package is deliberately small — five modules plu
 | `train.py`          | **Phase 4 landed · Phase 5 machinery landed · HP tuning open** | Fine-tuning loop. `--prototype` mode (100 train / 25 val / 2 epochs, seeded + `num_workers=0` for bit-reproducible metrics) is the Phase 4 gate — "does the loss curve look plausible" — and closed cleanly on 2026-04-16 (train 0.89→0.76, val loss 0.90→0.83, val CC 0.60→0.64, ~90 seconds on M4 MPS). `--full` mode runs the full 1,684-image train set with gradient clipping, best-checkpoint saving on validation CC, ReduceLROnPlateau scheduler, and early stopping — safety machinery is landed ahead of Phase 5 per #11. Requires explicit `--prototype` or `--full` (no default mode, so accidental 4-hour runs aren't a typo away). Device auto-detect (`mps → cuda → cpu`). Loss is KL divergence (`src/foveacast_training/losses.py`); validation metric is Pearson correlation coefficient. Writes `runs/{mode}-{timestamp}/{history.json,best.pt,best.json,final.pt}` (all gitignored). | `msinet`, `ueyes_dataset`, `losses`, `torch` |
 | `losses.py`         | **landed** | KL divergence loss (ported from Kroner's `loss.py`; both maps sum-normalised per image before the KL) and Pearson correlation coefficient metric. Exported for use by `train.py` and by Phase 6's eval module. | `torch` |
 | `eval.py`           | **Phase 6**| Saliency metrics (CC, KLD, NSS) on the held-out UEyes test split, plus qualitative overlays on the four reference screenshots from Foveacast's V2 comparison set. Produces a markdown report for the release notes. | `msinet`, `ueyes_dataset`, `scipy`, `scikit-image` |
-| `export_onnx.py`    | **Phase 8**| Load a `best.pt` checkpoint, run `torch.onnx.export`, inline external data (`onnx.save_model(save_as_external_data=False)`), validate PyTorch vs `onnxruntime` CPU outputs within float tolerance. Mirrors Foveacast V2's existing export script pattern. | `msinet`, `onnx`, `onnxruntime` (dev-time only) |
+| `export_onnx.py`    | **landed** | Load a checkpoint, `torch.onnx.export` (opset 17, dynamic batch dim, fixed spatial dims), `onnx.save_model(save_as_external_data=False)` to produce a single-file artefact, validate PyTorch vs `onnxruntime` CPU outputs at `atol=1e-4` tolerance. First passing run 2026-04-16 (stock weights): 106.4 MB artefact, max abs err 1.79e-06, mean 1.09e-07. Mirrors Foveacast V2's `scripts/unisal-onnx-export.py` pattern. `releases/` is gitignored; artefacts ship via GitHub Releases. | `msinet`, `onnx`, `onnxruntime` |
 
 The `data/` folder is documentation + a fetch script plus the (gitignored) fetched dataset. `runs/`, `checkpoints/`, and release artefacts are all gitignored; release artefacts are attached to GitHub Releases instead.
 
@@ -140,7 +140,7 @@ Issue #1 describes ten phases. This table is the compressed version, annotated w
 | 5     | Full fine-tune                             | `runs/v3-msinet-ueyes/best.pt`                            | Validation CC beats stock MSI-Net                |
 | 6     | Quantitative evaluation                    | CC/KLD/NSS on held-out split                              | Fine-tuned > stock on at least one metric        |
 | 7     | Qualitative evaluation                     | Renders of the Foveacast four-screenshot benchmark set    | Eyeballs agree with quantitative numbers         |
-| 8     | ONNX export                                | `releases/foveacast-v3.onnx`                              | PyTorch vs onnxruntime CPU outputs within tol    |
+| 8     | ONNX export                                | `releases/foveacast-v3.onnx` **[gate closed 2026-04-16]** | PyTorch vs onnxruntime CPU outputs within tol (observed max 1.79e-06 at atol=1e-4) |
 | 9     | Release                                    | Tagged GitHub Release with artefact                       | Artefact exists and metadata is accurate         |
 | 10    | Foveacast integration PR                   | Cross-repo — PR on Foveacast                              | Playwright passes, benchmark re-run looks good   |
 

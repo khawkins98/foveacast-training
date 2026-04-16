@@ -31,6 +31,7 @@ env/
 # tracked by the release artefact attached to a GitHub Release than
 # by the bytes floating in the repo.
 runs/
+releases/
 checkpoints/
 *.pt
 *.pth

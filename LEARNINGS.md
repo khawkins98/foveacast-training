@@ -160,6 +160,34 @@ A second run produced bit-identical numbers — confirming the `torch.manual_see
 
 Phase 4 gate closed. Loss curve looks plausible. Ticks Phase 4 on #1.
 
+## 2026-04-16 — Phase 8 ONNX export: closed the gate on stock weights
+
+Phase 8's gate per #1 is "validate parity between PyTorch and `onnxruntime` CPU." That's testable against any checkpoint — the gate is about the export mechanism, not about which specific weights we export. Running against `weights/msinet_salicon.pt` (stock MSI-Net) was therefore the fastest way to close Phase 8 while Phase 5's `--full` training was still running in the background.
+
+**Numbers from the first passing run (2026-04-16, stock weights):**
+
+| metric | value |
+|---|---|
+| artefact size | 106.4 MB |
+| max abs err   | 1.79e-06 |
+| mean abs err  | 1.09e-07 |
+| tolerance     | 1e-4 (55× headroom) |
+
+55× headroom is reassuring — the `_tf1_bilinear_upsample` helper that I'd flagged in Phase 2's LEARNINGS as "Gather + Mul + Add in ONNX rather than a single Resize" round-trips cleanly. Parity is dominated by the expected fp32-vs-fp32 ordering drift across `torch.onnx`'s decomposed ops, not by any semantic mismatch.
+
+**Choices that worked first-try:**
+
+- **Opset 17** (current PyTorch default at export time). Widely supported by `onnxruntime-web`.
+- **Dynamic batch dim, fixed spatial dims.** `dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}`. A future caller wanting to batch multiple images doesn't need a re-export; a future caller wanting a different input resolution does, because `_tf1_bilinear_upsample` bakes in concrete output sizes at trace time. That's deliberate — dynamic spatial would make the helper substantially more complex, and shipping one resolution is the Phase 9 release goal anyway.
+- **Single-file artefact via `save_as_external_data=False`.** Belt-and-braces round-trip through `onnx.load` + `onnx.save_model` forces all weight tensors back into the main blob. MSI-Net is well under the 2 GB auto-externalisation threshold but the round-trip costs nothing and means `onnxruntime-web` loads one blob rather than two.
+- **Export on CPU.** `EXPORT_DEVICE = torch.device("cpu")` regardless of what's available. MPS tracing has known shape-inference quirks; the exported graph runs on any target regardless of where it was traced. Portability wins over throughput (export is a one-shot anyway).
+
+**Artefact size: 106.4 MB is bigger than V2's UNISAL 12.5 MB.** Expected — MSI-Net is 25M params (VGG16 backbone dominates); UNISAL is smaller arch. 100 MB at fp32 is the floor without quantisation. If browser-side loading turns out to be a Phase 10 concern, fp16 export halves it to ~53 MB and int8 quantisation could go lower, but those are Phase 9/10 optimisations — the gate as specified in #1 is about parity, not size.
+
+**What Phase 9 / Phase 10 need from this module.** When Phase 5's `best.pt` lands, the same command with a different `--checkpoint` produces `releases/foveacast-v3.onnx`. No code changes; the parity gate will either re-close (expected, since fine-tuning doesn't change which ops run) or surface a concrete number for the release notes. That artefact is what Foveacast's integration PR (Phase 10) drops into `docs/models/foveacast-v3/model.onnx`.
+
+Phase 8 gate closed. Ticks Phase 8 on #1.
+
 ## 2026-04-16 — Phase 5 readiness: safety before hyperparameters
 
 Spun out of #10's DevRel review, tracked in #11. The point is that Phase 5's full fine-tune is a 4-hour commitment on M4 MPS, so making it fail *loudly* and recover *gracefully* before the first run matters more than tuning hyperparameters ahead of time. Hyperparameters get tuned empirically; safety machinery doesn't have to be.
