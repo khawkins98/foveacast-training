@@ -15,6 +15,7 @@ This file is the sibling of Foveacast's [`CLAUDE.md`](https://github.com/khawkin
 Read these before making substantive changes:
 
 - [README.md](README.md) — what the repo is for, how to set it up, how to reproduce.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — end-to-end pipeline shape, module responsibilities, the `.onnx` contract with Foveacast, and the phase map. Start here if you are about to touch anything inside `src/foveacast_training/`.
 - [LEARNINGS.md](LEARNINGS.md) — dated prose log of decisions and dead ends. Check this before re-deriving something.
 - [issue #1](https://github.com/khawkins98/foveacast-training/issues/1) — phased plan from fetch-dataset to integration-PR. The handoff brief for anyone (human or LLM) starting work on this repo.
 - Foveacast's [LEARNINGS.md](https://github.com/khawkins98/Foveacast/blob/main/LEARNINGS.md) — the upstream trajectory that explains *why this repo exists at all*. The 2026-04-16 entries on model survey, UMSI++ correction, and companion-repo split are the load-bearing ones.

@@ -43,3 +43,32 @@ Starting on [issue #1](https://github.com/khawkins98/foveacast-training/issues/1
 **CLAUDE.md adapted from Foveacast's.** Foveacast's [`CLAUDE.md`](https://github.com/khawkins98/Foveacast/blob/main/CLAUDE.md) is several months of accumulated convention; forking it for a Python research repo was cheaper than writing from scratch. Dropped the JS/browser-specific sections (layer discipline, tfjs, heatmap.js, Vite, accessibility) and added the pieces this repo actually needs: attribution as a hard rule, MPS-first, extras-split dependency discipline, LEARNINGS-as-workflow, one-phase-per-PR. Humanizer, commit hygiene, co-author trailer, review-not-fix — all carried over unchanged.
 
 **Open decisions parked.** Issue #1 flags four: port MSI-Net to PyTorch vs vendor Keras, input resolution, train/val/test split, device. None block Phase 0. All four will need answers before Phase 1 starts, which is why they live on a separate note rather than getting decided here.
+
+## 2026-04-16 — Phase 1 decision: PyTorch port, fine-tune at 240×320
+
+After resolving the three open ambiguities from the upstream-code audit (details in [#2](https://github.com/khawkins98/foveacast-training/issues/2)), going with option B: port MSI-Net's architecture to PyTorch and load Kroner's pretrained SALICON weights via the HuggingFace SavedModel.
+
+**Why B beat A.** The ambiguity audit made the port easier, not harder. Kroner's preprocessing turned out to be a single in-graph mean subtraction (`x - [103.939, 116.779, 123.68]`), not a black-box `keras.applications.preprocess_input` call. The architecture is hand-rolled without `tf.keras.applications` wrappers hiding anything behind library internals. Weight loading comes through the HuggingFace SavedModel, so we are not wrestling TF 1.x checkpoint plumbing. Effort estimate for the port came down from 4–8 days to 3–5. Meanwhile option A's case got correspondingly weaker — less to "buy" by vendoring Keras when the Keras-specific machinery is almost nothing.
+
+The durable reasons were there before the audit and did not change:
+
+- No existing PyTorch port means we build either way. The only question is what stack the build ends up in.
+- MPS on Apple Silicon is better served by PyTorch than by TensorFlow 2.x.
+- Foveacast V2's ONNX export pipeline is already PyTorch-shaped. Staying on one stack across training and export means one toolchain to debug, not two.
+- TF 2.x is moving into maintenance mode; Keras 3 is the active line. Pinning a multi-year research repo to TF 2.15 now accumulates technical debt that is not needed.
+
+**Fine-tune resolution: 240×320, not V1's 120×160.** Trading inference cost for accuracy, on purpose.
+
+- The HuggingFace SavedModel is the SALICON variant, trained at (240, 320). Fine-tuning at the same resolution keeps the weights close to the prior they were trained against.
+- V1's 120×160 was a TFJS-era browser-perf choice, not a Kroner-recommended input size. Fine-tuning at 120×160 means running MSI-Net at a resolution it was not trained for — the pretrained weights become an approximate prior instead of a close one.
+- The whole point of V3 is better saliency prediction on UI content. Starting at the resolution where the model is actually good and scaling back if browser perf is unacceptable is a better ordering than starting cheaper and discovering we have handicapped the accuracy story.
+
+**Revisit triggers.** The 240×320 choice is not load-bearing forever. Re-open the question if:
+
+- Phase 6 quantitative eval shows the fine-tuned model is no better than stock MSI-Net — something else is broken; resolution is not the fix.
+- Phase 10 Foveacast integration shows inference latency is unacceptable on the target hardware baseline (mid-range laptops, not GPUs).
+- A production case emerges for multiple quality presets — V1 shipped five; V3 could do the same by fine-tuning once and exporting at multiple resolutions.
+
+**What does not change.** The ONNX contract with Foveacast keeps the same shape as V2's — single `.onnx` artefact, consumed via `onnxruntime-web`, loaded from `docs/models/` in the Foveacast repo. The only visible difference downstream is better heatmaps on UI content. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full end-to-end shape of the pipeline and the contract boundary.
+
+Closes #2. Ticks Phase 1 on #1.
