@@ -248,6 +248,31 @@ Size difference is negligible (0.1 MB). Ship the naive fp16.
 
 FP8 was also evaluated and ruled out: `onnxruntime-web` has no FP8 op support, and 3 mantissa bits would need quantisation-aware retraining to avoid visible artefacts. INT8 (~26 MB) is the next realistic step if 57 MB turns out to be a problem in Foveacast's browser loading — it needs a calibration dataset and per-tensor scale/zero-point computation, so it's a half-day of work tracked in #15 if needed.
 
+## 2026-04-17 — Multi-duration model training infrastructure (issue #19)
+
+UEyes ships ground truth at three viewing-duration aggregates (`heatmaps_1s`, `heatmaps_3s`, `heatmaps_7s`). v0.1.0 ships one model trained against `heatmaps_3s`. Issue #19 is to train two more — 1s for "what grabs the eye first", 7s for "what's eventually noticed" — so Foveacast can offer a duration selector.
+
+The issue asserted "no code changes needed — just run `--full` with a different `saliency_variant`." Almost true. A few pieces needed to land before the two ~3.5 h runs were safe to kick off:
+
+**`--saliency-variant` as a first-class CLI flag.** Was a constructor arg on `UEyesDataset`; wasn't wired through `train.py`. Threading it through both the train and val dataset instances (easy) and into the run-dir name (so `runs/full-heatmaps_1s-.../` is self-identifying when parallel runs are on disk) took the bulk of the PR.
+
+**`eval.py --time-window`.** Evaluation previously hard-coded `heatmaps_3s` and `fixmaps_3s` — the two-dataset lock-step pattern Phase 6 uses for CC/KLD (heatmap target) vs NSS (fixmap target). Parameterised both off a single `1s|3s|7s` flag so cross-duration evaluation is impossible by accident. Matched-window eval is the right question for #19 ("does the 1s model agree with 1s ground truth?"), not cross-window ("how does 1s do on 3s ground truth?").
+
+**Resume support for interrupted runs.** This one was explicitly out of #19's stated scope but worth doing before committing to 7 h of compute. Each epoch now overwrites `state.pt` with model weights + optimizer moments + scheduler counter + history + next-epoch marker. `--resume state.pt` picks up at the last completed epoch. The resumed trajectory is *not* bit-exact vs an uninterrupted run — DataLoader shuffle order diverges because we don't restore RNG state — but that's fine; the goal of resume is "recover a trained model after a sleep event or OOM", not "reproduce the exact loss curve." State file is ~300 MB per save (model ~100 MB + Adam moments ~200 MB), overwritten each epoch, so no disk-growth concern across a 30-epoch run.
+
+Smoke-tested by running `--prototype` to completion, hand-editing the resulting `state.pt` back to an "after epoch 1" posture, and running `--resume`. History from epoch 1 was preserved, epoch 2 executed, the merged `history.json` had both epochs in order. Good enough; the design is straightforward and the test catches the obvious failure modes (load errors, schema mismatch, optimizer state not restored).
+
+**FP16 as a committed flag, not an ad-hoc conversion.** The v0.1.0 FP16 artefact (`foveacast-v3-fp16.onnx`) was produced via a one-shot `convert_float_to_float16` call from an interactive session — no script in the repo. For three releases that needs to be reproducible, so `export_onnx.py --fp16` is now a first-class flag with a matched 1e-3 parity tolerance (the LEARNINGS entry right above this one covers why naive beats selective). Dep is `onnxconverter-common` — ~1 MB pure-Python, added to core rather than a separate extras group so a downstream re-exporter doesn't need to discover an extras name.
+
+**INT8 static post-training quantisation.** `quantize_int8.py` is new. Produces ~26 MB artefacts (three of those plus three FP16 fallbacks is 6 assets on `v0.2.0`). Design decisions:
+
+- *Static over dynamic quantisation.* Static needs a calibration dataset (100 random UEyes training images here) but produces meaningfully better results on conv-heavy networks. Dynamic would skip calibration but tends to underperform on activation distributions that vary per layer — which is exactly the case for a VGG16-backbone saliency model.
+- *QUInt8 activations + QInt8 weights.* ORT's standard recipe. Activations post-ReLU are always non-negative so QUInt8 (asymmetric, `[0, 255]`) wastes no range on negative values; weights are zero-centred so QInt8 (symmetric, `[-128, 127]`) fits the distribution better.
+- *`quant_pre_process` before `quantize_static`.* ORT's docs call this optional; in practice skipping it is the #1 cause of "Could not infer shape of tensor X" failures at quantisation time. The graph's shape-inference state from `torch.onnx.export` isn't always complete enough for the quantiser to reason about.
+- *100 calibration samples.* ORT docs recommend 100-500. Saliency output is a well-behaved `[0, 1]`-ish range; diminishing returns kick in fast. If a model's parity gate fails, bumping to 300 is the first knob to turn.
+
+Quality gate is comparative: ship INT8 as primary if CC/KLD/NSS delta vs FP16 is <3% per metric, fall back to FP16 otherwise. Measurement happens post-training in the same pass as the stock-vs-fine-tuned comparison. `eval.py --onnx` for evaluating ONNX models directly didn't land in this PR — all quality comparisons are on the PyTorch `best.pt`, and the INT8 artefact's quality is inferred from PyTorch↔INT8-ORT parity at realistic inputs.
+
 ## 2026-04-17 — Phase 10 integration: heatmap.js was distorting the visual output all along
 
 Discovered during the Foveacast integration (PR #5 on Foveacast) that the saliency overlays in the browser looked dramatically different from the benchmark renders in foveacast-training. The model output was verified identical (PyTorch ↔ ONNX FP16 at 100% hotspot overlap), and the preprocessing difference (PIL BICUBIC vs JS bilinear) produced only 96.8% overlap — not enough to explain what we were seeing.

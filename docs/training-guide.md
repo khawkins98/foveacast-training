@@ -56,7 +56,7 @@ These are the parameters worth varying in future experiments, in rough order of 
 
 ### 1. Saliency target variant
 
-**Current:** `heatmaps_3s`
+**Current:** `heatmaps_3s` (the v0.1.0 shipped default)
 
 **Options:** `heatmaps_1s`, `heatmaps_3s`, `heatmaps_7s`, `fixmaps_1s`, `fixmaps_3s`, `fixmaps_7s`
 
@@ -65,15 +65,21 @@ These are the parameters worth varying in future experiments, in rough order of 
 **How to try:**
 
 ```sh
-# In src/foveacast_training/ueyes_dataset.py, the variant is a constructor arg:
-# UEyesDataset(root, split="train", saliency_variant="heatmaps_7s")
-#
-# Or modify FULL_CONFIG in train.py (future: accept via --config YAML).
-# For now, edit ueyes_dataset.py DEFAULT_SALIENCY_VARIANT or pass at
-# construction time from a modified train.py.
+# First-class CLI flag. Thread through to both train and val datasets
+# and includes the variant in the run-dir name for self-identification.
+.venv/bin/python -m foveacast_training.train --full --saliency-variant heatmaps_1s
+
+# Eval must be run at the matched time window, otherwise CC/KLD/NSS are
+# comparing apples to oranges:
+.venv/bin/python -m foveacast_training.eval \
+    --checkpoint runs/full-heatmaps_1s-*/best.pt \
+    --compare weights/msinet_salicon.pt \
+    --time-window 1s --split test
 ```
 
-**Expected effect:** `heatmaps_1s` would produce a model biased toward first-fixation targets (headlines, hero images, primary CTAs). `heatmaps_7s` would spread attention more broadly across secondary content. The right choice depends on what Foveacast's users care about — "where will the eye land first" vs "what gets looked at overall."
+**Expected effect:** `heatmaps_1s` biases toward first-fixation targets (headlines, hero images, primary CTAs); `heatmaps_7s` spreads attention more broadly across secondary content. The right choice depends on what Foveacast users care about — "where does the eye land first" vs "what gets looked at overall." Issue #19 ships all three as user-selectable.
+
+**Note on hyperparameters:** `FULL_CONFIG` was tuned against `heatmaps_3s` for the v0.1.0 baseline. A new-variant run is effectively a hyperparameter probe — the LR schedule, epoch count, and batch size haven't been tested for 1s/7s targets. If the first run plateaus early or diverges, LR is the first knob to try.
 
 ### 2. Learning rate
 
@@ -127,11 +133,26 @@ For now, configs live as Python dicts in `src/foveacast_training/train.py` (`FUL
 .venv/bin/python -m foveacast_training.train --full
 ```
 
-Output goes to `runs/full-{timestamp}/` with:
+Output goes to `runs/full-{variant}-{timestamp}/` with:
 - `history.json` — per-step train loss + per-epoch val loss / CC / LR
 - `best.pt` — weights at the best val CC epoch
 - `best.json` — metadata for the best epoch
 - `final.pt` — weights at training end (may differ from best if early-stopped)
+- `state.pt` — full resumable snapshot (model + optimizer + scheduler + counters), overwritten each epoch
+
+If a run gets interrupted (sleep event, Ctrl-C, OOM), pick it up at the last completed epoch:
+
+```sh
+.venv/bin/python -m foveacast_training.train --resume runs/full-{variant}-{timestamp}/state.pt
+```
+
+The resume output continues in the same dir. Mode, config, and saliency variant are read from `state.pt`; `--prototype` / `--full` / `--saliency-variant` cannot be combined with `--resume` and will error. Resume is not bit-exact (DataLoader shuffle RNG is not restored) — the goal is recovering a trained model, not reproducing a specific loss curve.
+
+For long runs on a MacBook, wrap the command in `caffeinate -i -s` to block idle and system sleep:
+
+```sh
+caffeinate -i -s .venv/bin/python -m foveacast_training.train --full --saliency-variant heatmaps_1s
+```
 
 ### 3. Evaluate
 
@@ -161,11 +182,28 @@ Output goes to `runs/full-{timestamp}/` with:
 
 ### 5. Export if it's a keeper
 
+Three precision levels, pick per your size/quality budget:
+
 ```sh
+# FP32 — 106 MB, max parity error ~6e-6. Reference only; too large for browser.
 .venv/bin/python -m foveacast_training.export_onnx \
     --checkpoint runs/full-{your-timestamp}/best.pt \
-    --out releases/foveacast-{your-experiment-name}.onnx \
-    --report releases/foveacast-{your-experiment-name}.parity.json
+    --out releases/foveacast-{name}.onnx \
+    --report releases/foveacast-{name}.parity.json
+
+# FP16 — 57 MB, max parity error ~7e-4. v0.1.0 ships this format.
+.venv/bin/python -m foveacast_training.export_onnx --fp16 \
+    --checkpoint runs/full-{your-timestamp}/best.pt \
+    --out releases/foveacast-{name}-fp16.onnx \
+    --report releases/foveacast-{name}-fp16.parity.json
+
+# INT8 — ~26 MB, max parity error ~1e-2. Smallest; needs calibration data.
+# Ship only if the CC/KLD/NSS delta vs FP16 is acceptable for your use.
+.venv/bin/python -m foveacast_training.quantize_int8 \
+    --checkpoint runs/full-{your-timestamp}/best.pt \
+    --calibration-data data/ueyes/UEyes_dataset \
+    --out releases/foveacast-{name}-int8.onnx \
+    --report releases/foveacast-{name}-int8.parity.json
 ```
 
 ### 6. Record the results
