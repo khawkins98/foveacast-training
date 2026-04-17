@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from foveacast_training.losses import correlation_coefficient, kl_divergence_saliency
+from foveacast_training.losses import (
+    correlation_coefficient,
+    kl_divergence_saliency,
+    normalized_scanpath_saliency,
+)
 
 
 @pytest.fixture
@@ -98,3 +102,91 @@ def test_cc_handles_constant_map():
     pred = torch.ones_like(target) * 0.5
     cc = correlation_coefficient(pred, target)
     assert torch.isfinite(cc)
+
+
+# ---------- Normalized Scanpath Saliency ----------------------------------
+
+
+def _fake_fixmap(shape: tuple[int, ...], n_fix: int = 10) -> torch.Tensor:
+    """Build a binary fixation map with `n_fix` fixations at the pixels
+    of highest saliency value — useful for synthesising a "good" prediction.
+    """
+    torch.manual_seed(5)
+    m = torch.zeros(shape)
+    # Random fixation locations per image.
+    for n in range(shape[0]):
+        idx = torch.randperm(shape[-1] * shape[-2])[:n_fix]
+        flat = m[n, 0].flatten()
+        flat[idx] = 1.0
+        m[n, 0] = flat.view(shape[-2:])
+    return m
+
+
+def test_nss_near_zero_for_uniform_prediction():
+    """A constant prediction z-normalises to zero everywhere, so NSS ≈ 0
+    regardless of where the fixations are.
+    """
+    pred = torch.ones(2, 1, 32, 40) * 0.5
+    fixmap = _fake_fixmap((2, 1, 32, 40))
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    assert abs(nss.item()) < 1e-3
+
+
+def test_nss_is_positive_when_prediction_peaks_at_fixations():
+    """If the prediction has high values exactly at the fixation
+    locations, z-normalised pred at those points should be well above
+    zero.
+    """
+    fixmap = _fake_fixmap((1, 1, 32, 40), n_fix=20)
+    # Pred = fixmap itself with small noise elsewhere → peaks exactly at
+    # the fixations.
+    torch.manual_seed(6)
+    pred = fixmap + 0.01 * torch.rand_like(fixmap)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    assert nss.item() > 1.0  # well above random
+
+
+def test_nss_is_negative_when_prediction_avoids_fixations():
+    """If the prediction is anti-correlated with fixations (high
+    elsewhere, low at fixation points), NSS should be negative.
+    """
+    fixmap = _fake_fixmap((1, 1, 32, 40), n_fix=20)
+    torch.manual_seed(7)
+    pred = (1 - fixmap) + 0.01 * torch.rand_like(fixmap)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    assert nss.item() < -1.0
+
+
+def test_nss_output_is_scalar():
+    fixmap = _fake_fixmap((2, 1, 16, 16))
+    pred = torch.rand_like(fixmap)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    assert nss.ndim == 0
+
+
+def test_nss_handles_zero_fixations():
+    """Images with no fixations shouldn't NaN. The eps in the denominator
+    keeps the per-image term finite; it degenerates to 0 which contributes
+    a 0 to the batch mean.
+    """
+    fixmap = torch.zeros(1, 1, 16, 16)
+    pred = torch.rand_like(fixmap)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    assert torch.isfinite(nss)
+
+
+def test_nss_handles_near_constant_prediction():
+    """A prediction that is constant except for tiny float noise has
+    std ≈ machine epsilon. The eps guard in the denominator has to keep
+    the output bounded — otherwise float-noise / tiny-std → large spurious
+    NSS. Regression guard against removing or shrinking the eps.
+    """
+    torch.manual_seed(8)
+    pred = torch.full((1, 1, 16, 16), 0.5) + 1e-8 * torch.randn(1, 1, 16, 16)
+    fixmap = _fake_fixmap((1, 1, 16, 16), n_fix=5)
+    nss = normalized_scanpath_saliency(pred, fixmap)
+    # Bound: well below NSS=1.0 (which would indicate meaningful signal).
+    # Actual value should be near zero since pred is essentially random
+    # noise with respect to fixmap.
+    assert torch.isfinite(nss)
+    assert abs(nss.item()) < 1.0

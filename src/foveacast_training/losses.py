@@ -77,6 +77,61 @@ def kl_divergence_saliency(
     return loss.sum(dim=(1, 2, 3)).mean()
 
 
+def normalized_scanpath_saliency(
+    pred: torch.Tensor,
+    fixmap: torch.Tensor,
+    eps: float = 1e-7,
+) -> torch.Tensor:
+    """Normalized Scanpath Saliency (NSS) metric.
+
+    Standard saliency-prediction metric alongside CC and KLD. Defined as
+    the mean of the z-normalised prediction sampled at fixation locations.
+    A random uniform prediction gives NSS ≈ 0; a perfect prediction
+    (spike at every fixation, zero elsewhere) gives NSS equal to the
+    per-image standard deviation over the fixation set.
+
+    Reference: Bylinskii et al., "What Do Different Evaluation Metrics
+    Tell Us About Saliency Models?", TPAMI 2019.
+
+    Parameters
+    ----------
+    pred : torch.Tensor
+        Predicted saliency map, shape `(N, 1, H, W)`.
+    fixmap : torch.Tensor
+        Binary fixation map, same shape. Values in [0, 1]; any pixel
+        above 0.5 counts as a fixation (threshold handles both strictly-
+        binary {0, 1} UEyes fixmaps and lightly-smoothed variants).
+    eps : float
+        Numerical guard when std or fixation count is zero.
+
+    Returns
+    -------
+    torch.Tensor
+        Scalar NSS, averaged across the batch.
+    """
+    # Z-normalise pred per image.
+    # why: correction=0 gives the population std (divisor = N) rather than
+    # the Bessel-corrected sample std (divisor = N-1). Bylinskii's reference
+    # and most of the saliency literature use population std; PyTorch's
+    # default is Bessel. For a 240×320 pred the bias is ~5e-7 relative, so
+    # numerically invisible, but consistency with the literature matters
+    # when the JSON numbers land in a release note alongside cited values.
+    pred_flat = pred.flatten(start_dim=1)
+    mu = pred_flat.mean(dim=1, keepdim=True)
+    std = pred_flat.std(dim=1, keepdim=True, correction=0)
+    pred_z = (pred_flat - mu) / (eps + std)
+
+    # Sample at fixation locations.
+    fixmap_flat = fixmap.flatten(start_dim=1)
+    fixmap_bin = (fixmap_flat > 0.5).to(pred_z.dtype)
+    # why: sum/count rather than masked mean because fixmap_bin is a float
+    # tensor on possibly-MPS device; boolean advanced indexing moves the
+    # tensor through an unsupported codepath.
+    n_fix = fixmap_bin.sum(dim=1)
+    nss_per_image = (pred_z * fixmap_bin).sum(dim=1) / (eps + n_fix)
+    return nss_per_image.mean()
+
+
 def correlation_coefficient(
     pred: torch.Tensor,
     target: torch.Tensor,
