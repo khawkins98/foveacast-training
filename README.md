@@ -1,6 +1,6 @@
 # foveacast-training
 
-**Status: pre-release.** The fine-tuned model is trained and evaluated but not yet tagged as a GitHub Release. See [Running the pipeline](#running-the-pipeline) for what works today.
+**[v0.1.0 released](https://github.com/khawkins98/foveacast-training/releases/tag/v0.1.0)** — UI-aware saliency model, 57 MB FP16 ONNX. Fine-tuned MSI-Net beats stock by 43-45% on all standard saliency metrics.
 
 Training pipeline for the saliency model that ships in [Foveacast](https://github.com/khawkins98/Foveacast).
 
