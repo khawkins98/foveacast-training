@@ -148,11 +148,14 @@ If a run gets interrupted (sleep event, Ctrl-C, OOM), pick it up at the last com
 
 The resume output continues in the same dir. Mode, config, and saliency variant are read from `state.pt`; `--prototype` / `--full` / `--saliency-variant` cannot be combined with `--resume` and will error. Resume is not bit-exact (DataLoader shuffle RNG is not restored) — the goal is recovering a trained model, not reproducing a specific loss curve.
 
-For long runs on a MacBook, wrap the command in `caffeinate -i -s` to block idle and system sleep:
+For long runs on a MacBook, wrap the command in `caffeinate -i -s` to block idle and system sleep, pipe through `tee` so progress lands in both the terminal and a log file, and pass `python -u` to force unbuffered output:
 
 ```sh
-caffeinate -i -s .venv/bin/python -m foveacast_training.train --full --saliency-variant heatmaps_1s
+caffeinate -i -s .venv/bin/python -u -m foveacast_training.train --full \
+    --saliency-variant heatmaps_1s 2>&1 | tee runs/1s-run.log
 ```
+
+The `-u` matters when piping: Python switches stdout from line-buffered to block-buffered once it's connected to a pipe rather than a TTY, so `print` calls accumulate (~4-8 KB) before flushing. Without `-u`, the log file stays empty for minutes at a time and it's hard to tell whether the run is progressing or hung. This is a real gotcha — preserved here because it cost us ~10 min of "is it actually running?" anxiety on the first issue #19 run.
 
 ### 3. Evaluate
 
