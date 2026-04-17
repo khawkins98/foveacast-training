@@ -8,7 +8,7 @@ This repo is the upstream producer; Foveacast is the downstream consumer. A trai
 
 ## Results
 
-Fine-tuned MSI-Net vs stock (SALICON-pretrained) on the held-out UEyes test split (108 images, never seen during training):
+Fine-tuned MSI-Net vs stock (SALICON-pretrained) on the held-out [UEyes](https://userinterfaces.aalto.fi/ueyeschi23/) test split (108 images, never seen during training):
 
 | metric | fine-tuned | stock | improvement |
 |---|---|---|---|
@@ -18,7 +18,7 @@ Fine-tuned MSI-Net vs stock (SALICON-pretrained) on the held-out UEyes test spli
 
 Fine-tuning on UI content closes the gap between "natural-scene saliency model" and "model that knows what a button is." Here's what that looks like on a real web page (from the held-out UEyes test split, with ground-truth eye-tracking for reference):
 
-| Source screenshot | Ground truth (real eye-tracking) | Stock MSI-Net (SALICON-only) | Fine-tuned on UEyes |
+| Source screenshot | Ground truth (real eye-tracking) | Stock MSI-Net (SALICON-only) | Fine-tuned on [UEyes](https://zenodo.org/records/8010312) |
 |---|---|---|---|
 | ![source](benchmark/screenshots/ueyes-8f9844-source.png) | ![ground truth](benchmark/screenshots/ueyes-8f9844-ground-truth.png) | ![stock](benchmark/screenshots/ueyes-8f9844-stock.png) | ![fine-tuned](benchmark/screenshots/ueyes-8f9844-finetuned.png) |
 
@@ -51,7 +51,7 @@ The output is a single-channel saliency map normalised to [0, 1]. Higher values 
 
 ## Limitations and intended use
 
-The model is trained on the [UEyes dataset](https://doi.org/10.1145/3544548.3581096) — 1,980 UI screenshots across four categories (desktop, mobile, web, poster) with eye-tracking from 62 participants. It predicts where users are likely to look on a UI screenshot.
+The model is trained on the [UEyes dataset](https://zenodo.org/records/8010312) ([project page](https://userinterfaces.aalto.fi/ueyeschi23/), [paper](https://doi.org/10.1145/3544548.3581096), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)) — 1,980 UI screenshots across four categories (desktop, mobile, web, poster) with eye-tracking from 62 participants. It predicts where users are likely to look on a UI screenshot.
 
 **Known limitations:**
 
@@ -65,7 +65,7 @@ The model is trained on the [UEyes dataset](https://doi.org/10.1145/3544548.3581
 
 ## What we're trying to do, specifically
 
-V1 of Foveacast shipped [MSI-Net](https://github.com/alexanderkroner/saliency) (Kroner et al., 2020) via TensorFlow.js. V2 spiked [UNISAL](https://github.com/rdroste/unisal) through ONNX Runtime Web. Both are SALICON-trained — which means both are primarily trained on natural photographs, not UI content. A benchmark against real eye-tracking ground truth from the UEyes study made that limitation visible: the models miss CTAs, don't weigh buttons differently from surrounding text, and produce diffuse centrality blobs on structured UI layouts.
+V1 of Foveacast shipped [MSI-Net](https://github.com/alexanderkroner/saliency) (Kroner et al., 2020) via TensorFlow.js. V2 spiked [UNISAL](https://github.com/rdroste/unisal) through ONNX Runtime Web. Both are SALICON-trained — which means both are primarily trained on natural photographs, not UI content. A benchmark against real eye-tracking ground truth from the [UEyes study](https://userinterfaces.aalto.fi/ueyeschi23/) made that limitation visible: the models miss CTAs, don't weigh buttons differently from surrounding text, and produce diffuse centrality blobs on structured UI layouts.
 
 The fix is not swapping to yet another natural-scene-trained model. The fix is training on UI content. This repo fine-tunes MSI-Net (permissively licensed, architecturally well-understood) on the [UEyes dataset](https://zenodo.org/records/8010312) (1,980 UI screenshots with real participant eye-tracking, permissively licensed). The goal is a saliency model that actually knows what a "Begin" button is and weighs it accordingly.
 
@@ -79,7 +79,7 @@ Three pieces of other people's work make this possible. If you use the model or 
 
 - **MSI-Net — model architecture.** Kroner, A., Senden, M., Driessens, K., & Goebel, R. (2020). Contextual Encoder-Decoder Network for Visual Saliency Prediction. *Neural Networks*, 129, 261–270. [doi:10.1016/j.neunet.2020.05.004](https://doi.org/10.1016/j.neunet.2020.05.004). Preprint: [arXiv:1902.06634](https://arxiv.org/abs/1902.06634). MIT licensed. Repo: [github.com/alexanderkroner/saliency](https://github.com/alexanderkroner/saliency).
 
-- **UEyes — fine-tuning dataset.** Jiang, Y., Leiva, L. A., Rezazadegan Tavakoli, H., Houssel, P. R. B., Kylmälä, J., & Oulasvirta, A. (2023). UEyes: Understanding Visual Saliency across User Interface Types. In *Proceedings of the 2023 CHI Conference on Human Factors in Computing Systems (CHI '23)*, Article 285, 1–21. [doi:10.1145/3544548.3581096](https://doi.org/10.1145/3544548.3581096). Dataset hosted on Zenodo at record [8010312](https://zenodo.org/records/8010312) under Creative Commons Attribution 4.0 International. Attribution required, commercial use permitted.
+- **UEyes — fine-tuning dataset.** Jiang, Y., Leiva, L. A., Rezazadegan Tavakoli, H., Houssel, P. R. B., Kylmälä, J., & Oulasvirta, A. (2023). UEyes: Understanding Visual Saliency across User Interface Types. In *Proceedings of the 2023 CHI Conference on Human Factors in Computing Systems (CHI '23)*, Article 285, 1–21. [doi:10.1145/3544548.3581096](https://doi.org/10.1145/3544548.3581096). [Project page](https://userinterfaces.aalto.fi/ueyeschi23/). Dataset hosted on Zenodo at record [8010312](https://zenodo.org/records/8010312) under [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). Attribution required, commercial use permitted.
 
 - **Foveacast — consumer application.** [github.com/khawkins98/Foveacast](https://github.com/khawkins98/Foveacast). MIT licensed.
 
@@ -294,6 +294,6 @@ Structured citation metadata also available in [`CITATION.cff`](CITATION.cff).
 
 ## Licences, in one place
 
-This repo — MIT. Model architecture ported from MSI-Net — MIT. Training dataset — UEyes, CC BY 4.0, attribution to Jiang et al. 2023. Released model artefacts — MIT code, but downstream use must carry the UEyes citation per CC BY 4.0. Python dependencies — each under its own licence; PyTorch is BSD-3, numpy is BSD, Pillow is MIT-CMU.
+This repo — MIT. Model architecture ported from MSI-Net — MIT. Training dataset — [UEyes](https://zenodo.org/records/8010312), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), attribution to Jiang et al. 2023. Released model artefacts — MIT code, but downstream use must carry the UEyes citation per CC BY 4.0. Python dependencies — each under its own licence; PyTorch is BSD-3, numpy is BSD, Pillow is MIT-CMU.
 
 Nothing here depends on closed-source or non-commercial components.
