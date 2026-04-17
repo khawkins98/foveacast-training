@@ -26,10 +26,23 @@
 
 <h1>Saliency Model Comparison — Does fine-tuning on UI content help?</h1>
 <p>
-  Same MSI-Net architecture, two different weight sets. <strong>Stock</strong> was trained on
-  SALICON (natural photographs). <strong>Fine-tuned</strong> was trained on UEyes (1,980 UI
-  screenshots with real eye-tracking). The difference is purely which weights are loaded —
-  not a runtime parameter. Foveacast ships one <code>.onnx</code> and that's the model.
+  Same <a href="https://github.com/alexanderkroner/saliency" style="color:#88f;">MSI-Net</a> architecture
+  (Kroner et al. 2020, <a href="https://doi.org/10.1016/j.neunet.2020.05.004" style="color:#88f;">doi:10.1016/j.neunet.2020.05.004</a>),
+  two different weight sets. <strong>Stock</strong> was trained on
+  <a href="http://salicon.net/" style="color:#88f;">SALICON</a> (natural photographs).
+  <strong>Fine-tuned</strong> was trained on
+  <a href="https://doi.org/10.1145/3544548.3581096" style="color:#88f;">UEyes</a>
+  (Jiang et al. 2023; 1,980 UI screenshots with real eye-tracking from 62 participants;
+  <a href="https://zenodo.org/records/8010312" style="color:#88f;">Zenodo dataset</a>, CC BY 4.0).
+  The difference is purely which weights are loaded —
+  not a runtime parameter. <a href="https://github.com/khawkins98/Foveacast" style="color:#88f;">Foveacast</a>
+  ships one <code>.onnx</code> and that's the model.
+</p>
+<p style="font-size:0.8rem; color:#666;">
+  Part of the <a href="https://github.com/khawkins98/foveacast-training" style="color:#88f;">foveacast-training</a> pipeline.
+  Full training configuration and reproduction guide: <a href="../../docs/training-guide.md" style="color:#88f;">docs/training-guide.md</a>.
+  Decision log: <a href="../../LEARNINGS.md" style="color:#88f;">LEARNINGS.md</a>.
+  Pipeline architecture: <a href="../../ARCHITECTURE.md" style="color:#88f;">ARCHITECTURE.md</a>.
 </p>
 
 <div class="verdict">
