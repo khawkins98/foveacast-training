@@ -228,6 +228,26 @@ Phase 8's gate per #1 is "validate parity between PyTorch and `onnxruntime` CPU.
 
 Phase 8 gate closed. Ticks Phase 8 on #1.
 
+## 2026-04-17 — FP16 quantisation: naive beats selective
+
+Explored two approaches to halving the release artefact from 106 MB (fp32) to ~57 MB (fp16):
+
+**Naive:** `convert_float_to_float16(model, keep_io_types=True)` — converts everything internal to fp16 while keeping input/output tensors as fp32 for caller compatibility. The `onnxconverter_common` library handles the precision boundaries automatically.
+
+**Selective:** `op_block_list=["ReduceMin", "ReduceMax", "Div"]` — keeps the `_normalize` step's min/max/division ops in fp32 to protect the `eps=1e-7` arithmetic from fp16 underflow (fp16 min normal is ~6e-5). The conv weights still go fp16 for the bulk savings.
+
+| variant | size | max err vs PyTorch |
+|---|---|---|
+| fp32 | 106.4 MB | 6.14e-06 |
+| **fp16 naive** | **56.5 MB** | **7.16e-04** |
+| fp16 selective | 56.6 MB | 9.27e-04 |
+
+The selective approach was supposed to be cleaner but was actually 29% worse on max error. The reason: keeping specific ops in fp32 while their upstream inputs arrive in fp16 creates mixed-precision boundaries. Each fp16→fp32 cast introduces a rounding step that the naive all-fp16 path avoids entirely. With everything in fp16, the arithmetic is consistent within its precision — no cross-format conversion noise.
+
+Size difference is negligible (0.1 MB). Ship the naive fp16.
+
+FP8 was also evaluated and ruled out: `onnxruntime-web` has no FP8 op support, and 3 mantissa bits would need quantisation-aware retraining to avoid visible artefacts. INT8 (~26 MB) is the next realistic step if 57 MB turns out to be a problem in Foveacast's browser loading — it needs a calibration dataset and per-tensor scale/zero-point computation, so it's a half-day of work tracked in #15 if needed.
+
 ## 2026-04-16 — Phase 5 readiness: safety before hyperparameters
 
 Spun out of #10's DevRel review, tracked in #11. The point is that Phase 5's full fine-tune is a 4-hour commitment on M4 MPS, so making it fail *loudly* and recover *gracefully* before the first run matters more than tuning hyperparameters ahead of time. Hyperparameters get tuned empirically; safety machinery doesn't have to be.

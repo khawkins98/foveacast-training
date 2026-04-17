@@ -16,13 +16,13 @@ Fine-tuned MSI-Net vs stock (SALICON-pretrained) on the held-out UEyes test spli
 | **KLD** (KL divergence, lower better) | 0.6574 ± 0.210 | 1.1682 ± 0.246 | **-44%** |
 | **NSS** (normalised scanpath saliency, higher better) | 2.2879 ± 0.605 | 1.5776 ± 0.451 | **+45%** |
 
-Fine-tuning on UI content closes the gap between "natural-scene saliency model" and "model that knows what a button is." Here's what that looks like on a real UI (the ACS Welcome page, with UEyes ground-truth eye-tracking for reference):
+Fine-tuning on UI content closes the gap between "natural-scene saliency model" and "model that knows what a button is." Here's what that looks like on a real web page (from the held-out UEyes test split, with ground-truth eye-tracking for reference):
 
 | Source screenshot | Ground truth (real eye-tracking) | Stock MSI-Net (SALICON-only) | Fine-tuned on UEyes |
 |---|---|---|---|
-| ![source](benchmark/screenshots/acs-welcome-source.png) | ![ground truth](benchmark/screenshots/acs-welcome-ground-truth.png) | ![stock](benchmark/screenshots/acs-welcome-v3-stock.png) | ![fine-tuned](benchmark/screenshots/acs-welcome-v3-finetuned.png) |
+| ![source](benchmark/screenshots/ueyes-8f9844-source.png) | ![ground truth](benchmark/screenshots/ueyes-8f9844-ground-truth.png) | ![stock](benchmark/screenshots/ueyes-8f9844-stock.png) | ![fine-tuned](benchmark/screenshots/ueyes-8f9844-finetuned.png) |
 
-The stock model produces a diffuse centrality blob. The fine-tuned model finds the "Begin" button, the sidebar navigation, and the header — matching where real users actually looked. Full visual comparison across four UI categories at [`benchmark/screenshots/comparison.html`](benchmark/screenshots/comparison.html).
+The stock model produces a diffuse centrality blob. The fine-tuned model picks up the navigation, content headings, and interactive elements — matching where real users actually looked. Full visual comparison across four UI categories at [`benchmark/screenshots/comparison.html`](benchmark/screenshots/comparison.html).
 
 The release artefact is a 57 MB `.onnx` file (FP16 quantised, opset 17). PyTorch ↔ onnxruntime CPU parity validated at max abs err < 1e-3.
 
