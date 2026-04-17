@@ -20,10 +20,15 @@ The test split (108 images) is the upstream-defined Test set from
 (188 images) is available via `--split val` for sanity checks, but
 the gate is "beats stock on test."
 
-NSS requires a binary fixation map (fixmaps_3s), CC and KLD use the
-heatmap (heatmaps_3s). The script loads both Dataset instances and
-iterates them in lock-step, relying on UEyesDataset's deterministic
-row ordering so the image-to-metric alignment stays correct.
+NSS requires a binary fixation map (fixmaps_{window}), CC and KLD use the
+continuous heatmap (heatmaps_{window}). The script loads both Dataset
+instances and iterates them in lock-step, relying on UEyesDataset's
+deterministic row ordering so the image-to-metric alignment stays correct.
+
+The `--time-window` flag (default 3s) picks which viewing-duration ground
+truth to evaluate against. For multi-duration models (issue #19), each
+model is evaluated at its matched window — the 1s model against 1s
+ground truth, 7s model against 7s ground truth — not cross-window.
 """
 
 from __future__ import annotations
@@ -75,6 +80,7 @@ def evaluate_checkpoint(
     data_root: Path,
     device: torch.device,
     batch_size: int = 4,
+    time_window: str = "3s",
 ) -> dict[str, dict[str, float]]:
     """Load a checkpoint, run the split through it, return per-metric
     mean + stdev computed over per-batch values.
@@ -92,17 +98,27 @@ def evaluate_checkpoint(
         Auto-detected by `_auto_device`.
     batch_size : int
         For eval. 4 is a safe default for MSINet on M4 MPS.
+    time_window : str
+        One of '1s', '3s', '7s'. Picks the viewing-duration variant for
+        both heatmap (CC/KLD target) and fixmap (NSS target). Models
+        trained against `heatmaps_{w}` should be evaluated with
+        `time_window=w` — cross-window eval answers a different question
+        ("does the 1s model agree with 3s ground truth?") and isn't the
+        default.
     """
     # why: load_model is the shared helper — strict=True catches
     # state_dict / module-name drift loudly rather than quietly evaluating
     # 108 images with most layers kept at init.
     model = load_model(checkpoint_path, device)
 
-    # Two datasets — heatmap target for CC/KLD, fixmap target for NSS.
-    # Phase 0 + 3 guarantee the split is deterministic given the same
-    # seed/fraction, so the two datasets' filenames() lists are identical.
-    ds_heatmap = UEyesDataset(data_root, split=split, saliency_variant="heatmaps_3s")
-    ds_fixmap = UEyesDataset(data_root, split=split, saliency_variant="fixmaps_3s")
+    # Two datasets — heatmap target for CC/KLD, fixmap target for NSS,
+    # both at the same viewing-duration window. Phase 0 + 3 guarantee
+    # the split is deterministic given the same seed/fraction, so the
+    # two datasets' filenames() lists are identical.
+    heatmap_variant = f"heatmaps_{time_window}"
+    fixmap_variant = f"fixmaps_{time_window}"
+    ds_heatmap = UEyesDataset(data_root, split=split, saliency_variant=heatmap_variant)
+    ds_fixmap = UEyesDataset(data_root, split=split, saliency_variant=fixmap_variant)
     if ds_heatmap.filenames() != ds_fixmap.filenames():
         raise RuntimeError(
             "heatmap and fixmap datasets disagree on split filenames — "
@@ -182,6 +198,16 @@ def main() -> None:
         help="Split to evaluate on. Phase 6 gate uses 'test'.",
     )
     parser.add_argument(
+        "--time-window",
+        choices=["1s", "3s", "7s"],
+        default="3s",
+        help=(
+            "Viewing-duration variant for the ground-truth heatmap + fixmap. "
+            "Default 3s matches the v0.1.0 shipped model; use 1s / 7s when "
+            "evaluating the multi-duration models from issue #19."
+        ),
+    )
+    parser.add_argument(
         "--data-root",
         type=Path,
         default=Path("data/ueyes/UEyes_dataset"),
@@ -202,17 +228,21 @@ def main() -> None:
     device = _auto_device()
     print(f"→ device: {device}")
     print(f"→ split:  {args.split}")
+    print(f"→ window: {args.time_window}  "
+          f"(heatmaps_{args.time_window} + fixmaps_{args.time_window})")
 
     print(f"→ evaluating {args.checkpoint}...")
     main_metrics = evaluate_checkpoint(
-        args.checkpoint, args.split, args.data_root, device, args.batch_size
+        args.checkpoint, args.split, args.data_root, device, args.batch_size,
+        time_window=args.time_window,
     )
 
     compare_metrics: dict[str, dict[str, float]] | None = None
     if args.compare is not None:
         print(f"→ evaluating {args.compare}...")
         compare_metrics = evaluate_checkpoint(
-            args.compare, args.split, args.data_root, device, args.batch_size
+            args.compare, args.split, args.data_root, device, args.batch_size,
+            time_window=args.time_window,
         )
 
     print()
@@ -238,6 +268,7 @@ def main() -> None:
         payload: dict[str, object] = {
             "checkpoint": str(args.checkpoint),
             "split": args.split,
+            "time_window": args.time_window,
             "metrics": main_metrics,
         }
         if compare_metrics is not None:
