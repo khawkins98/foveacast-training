@@ -248,6 +248,27 @@ Size difference is negligible (0.1 MB). Ship the naive fp16.
 
 FP8 was also evaluated and ruled out: `onnxruntime-web` has no FP8 op support, and 3 mantissa bits would need quantisation-aware retraining to avoid visible artefacts. INT8 (~26 MB) is the next realistic step if 57 MB turns out to be a problem in Foveacast's browser loading — it needs a calibration dataset and per-tensor scale/zero-point computation, so it's a half-day of work tracked in #15 if needed.
 
+## 2026-04-17 — Phase 10 integration: heatmap.js was distorting the visual output all along
+
+Discovered during the Foveacast integration (PR #5 on Foveacast) that the saliency overlays in the browser looked dramatically different from the benchmark renders in foveacast-training. The model output was verified identical (PyTorch ↔ ONNX FP16 at 100% hotspot overlap), and the preprocessing difference (PIL BICUBIC vs JS bilinear) produced only 96.8% overlap — not enough to explain what we were seeing.
+
+The actual cause was **heatmap.js's rendering**, which added three layers of distortion between the raw model output and the visual overlay:
+
+1. **Radius spreading.** Each saliency point was rendered as a 40px circle, making every hotspot look 40 pixels larger in every direction. A sharp attention peak on a button became a diffuse glow covering the button and its surroundings.
+2. **Stride sampling.** The library was fed every ~2nd pixel (stride = width/160) to keep point counts manageable. The spatial precision of the model's 240×320 output was being halved before rendering even started.
+3. **Internal blur at 0.85.** On top of our postprocess Gaussian blur (which we'd already reduced from sigma=28 to sigma=5 for V3), heatmap.js applied its own blur pass.
+
+The combined effect: a model that correctly predicted "the user will look at the Join Now button" produced a visual that said "the user will look at the entire right half of the page." The quantitative metrics (CC, KLD, NSS from Phase 6) were always comparing raw model outputs and were never affected — they remain valid. But every visual comparison ever shown through Foveacast's browser UI — including the V1 vs V2 benchmark screenshots in `docs/spikes/comparison/` — was distorted by this rendering layer.
+
+**What this means for the old V1/V2 comparisons:** the benchmark conclusion that "V1 MSI-Net produces diffuse centrality blobs" was partially a heatmap.js artefact. The stock model's raw output is more focused than heatmap.js made it look. V3 fine-tuned is still quantitatively better (+43% CC), but the visual gap between stock and fine-tuned was exaggerated by the renderer. The old comparison screenshots in this repo's `benchmark/screenshots/` carry a note about this — they should not be compared pixel-for-pixel against the new inferno renders.
+
+**The fix:** replaced heatmap.js with a direct pixel-by-pixel inferno colormap renderer (`docs/src/render/saliency-canvas.js` in Foveacast). No radius spreading, no stride sampling, no external library. Each pixel of the saliency map maps directly to a colour. The output now matches the benchmark renders from foveacast-training exactly.
+
+**Two other preprocessing issues found and fixed during integration:**
+
+- **Aspect-ratio-preserving resize.** Foveacast V2's preprocess stretched the image to fill 240×320. V3 MSI-Net was fine-tuned with aspect-preserving resize + constant-126 padding (Kroner's convention). The stretch produced noticeably different saliency predictions because the model saw a different pixel distribution than it was trained on. Fixed to match the training pipeline.
+- **Gaussian blur sigma.** V2's sigma=28 was tuned for UNISAL's very peaky log-probability output. V3's output is already smooth (VGG16 decoder + min-max normalisation). Reduced to sigma=5 — just enough to smooth resize staircasing without washing out attention peaks.
+
 ## 2026-04-16 — Phase 5 readiness: safety before hyperparameters
 
 Spun out of #10's DevRel review, tracked in #11. The point is that Phase 5's full fine-tune is a 4-hour commitment on M4 MPS, so making it fail *loudly* and recover *gracefully* before the first run matters more than tuning hyperparameters ahead of time. Hyperparameters get tuned empirically; safety machinery doesn't have to be.
