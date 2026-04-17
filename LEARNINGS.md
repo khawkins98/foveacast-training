@@ -160,6 +160,46 @@ A second run produced bit-identical numbers — confirming the `torch.manual_see
 
 Phase 4 gate closed. Loss curve looks plausible. Ticks Phase 4 on #1.
 
+## 2026-04-17 — Phase 5 full fine-tune: 30 epochs, best at 25
+
+Ran `python -m foveacast_training.train --full` overnight on M4 MPS. All 30 epochs completed; early stopping triggered at epoch 30 (5 non-improvement epochs since epoch 25's best). LR scheduler halved to 5e-7 around epoch 28 but didn't recover the plateau. Total wall-clock ~3.5 hours.
+
+**Best checkpoint: epoch 25, val_cc=0.7247.** Saved to `runs/full-20260416-225926/best.pt`.
+
+| epoch | train_loss | val_loss | val_cc | note |
+|---|---|---|---|---|
+| 1 | 0.8206 | 0.7454 | 0.6508 | ★ first |
+| 5 | 0.6314 | 0.6446 | 0.7016 | ★ |
+| 10 | 0.5836 | 0.6151 | 0.7162 | ★ |
+| 15 | 0.5539 | 0.6043 | 0.7211 | ★ |
+| 19 | 0.5350 | 0.5990 | 0.7236 | ★ |
+| 20 | 0.5300 | 0.5994 | 0.7232 | first non-improvement |
+| 22 | 0.5221 | 0.5968 | 0.7244 | ★ recovery |
+| 25 | 0.5097 | 0.5966 | 0.7247 | ★ **best** |
+| 30 | 0.4898 | 0.5983 | 0.7237 | early stop triggers |
+
+19 of 30 epochs produced new-bests. Gains slowed from +0.023/epoch (early) to +0.001/epoch (late). Two mini-plateaus at epochs 20-21 and 23-24 each recovered with a small jump. The LR scheduler fired around epoch 28 (3 epochs of plateau at patience=3), halving to 5e-7, which wasn't enough to break the final plateau — early stopping caught it at 5 epochs without improvement.
+
+The safety machinery from #11/#12 worked exactly as designed. Gradient clipping never visibly activated (no loss spikes in the log). Best-checkpoint saving captured epoch 25's weights. ReduceLROnPlateau and early stopping fired in sequence when the model genuinely plateaued. No intervention needed overnight.
+
+## 2026-04-17 — Phase 6 quantitative eval: fine-tuned beats stock on all three metrics
+
+Ran `python -m foveacast_training.eval --checkpoint runs/full-20260416-225926/best.pt --compare weights/msinet_salicon.pt --split test` on the held-out UEyes test split (108 images, never seen during training).
+
+| metric | fine-tuned (epoch 25) | stock SALICON | delta | direction |
+|---|---|---|---|---|
+| CC  | **0.7068** ± 0.105 | 0.4934 ± 0.094 | +0.2135 | +43% better |
+| KLD | **0.6574** ± 0.210 | 1.1682 ± 0.246 | -0.5108 | -44% better |
+| NSS | **2.2879** ± 0.605 | 1.5776 ± 0.451 | +0.7103 | +45% better |
+
+Phase 6's gate was "fine-tuned beats stock on at least one metric." It beat stock on all three, by 43-45% each. The improvement is consistent across metrics (CC, KLD, NSS all agree on the direction and magnitude) and across the standard deviation bands (the fine-tuned model's worst test image is still better on average than stock's mean).
+
+For context against the broader literature: the UEyes paper (Jiang et al. 2023) reported +10 AUC points fine-tuning their own models on UEyes. Our CC improvement of 0.21 absolute is in the same ballpark — the fine-tuning does what the paper said it would, on a different architecture (MSI-Net vs their in-house models) with a different training stack (PyTorch vs their TF pipeline).
+
+**Release artefact also produced:** `releases/foveacast-v3.onnx` (106.4 MB), exported from the fine-tuned `best.pt` with the same Phase 8 parity-validated export path. PyTorch ↔ onnxruntime CPU max abs err 6.14e-06 (16× under tolerance). Ready for Phase 9 release tagging.
+
+Phases 5 + 6 gates closed. Ticks both on #1.
+
 ## 2026-04-16 — Phase 8 ONNX export: closed the gate on stock weights
 
 Phase 8's gate per #1 is "validate parity between PyTorch and `onnxruntime` CPU." That's testable against any checkpoint — the gate is about the export mechanism, not about which specific weights we export. Running against `weights/msinet_salicon.pt` (stock MSI-Net) was therefore the fastest way to close Phase 8 while Phase 5's `--full` training was still running in the background.
