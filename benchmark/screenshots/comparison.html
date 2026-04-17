@@ -43,6 +43,66 @@
   This page shows whether those numbers match visual reality.
 </div>
 
+<h2>Weights used</h2>
+
+<table class="metric-table" style="margin-bottom: 1.5rem;">
+  <tr>
+    <th>Label in images</th>
+    <th>Checkpoint</th>
+    <th>Training details</th>
+  </tr>
+  <tr>
+    <td><strong>Fine-tuned (V3)</strong></td>
+    <td><code>runs/full-20260416-225926/best.pt</code></td>
+    <td>
+      MSI-Net fine-tuned on UEyes <code>heatmaps_3s</code>, epoch 25 of 30 (best val CC = 0.7247).<br>
+      LR 1e-6, Adam, batch 8, grad clip 1.0, ReduceLROnPlateau + early stop.<br>
+      Trained 2026-04-16 overnight on M4 MPS (~3.5 hours).<br>
+      ONNX: <code>releases/foveacast-v3.onnx</code> (106.4 MB, opset 17).
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Stock (V3 baseline)</strong></td>
+    <td><code>weights/msinet_salicon.pt</code></td>
+    <td>
+      Kroner's SALICON-pretrained MSI-Net, imported from
+      <a href="https://huggingface.co/alexanderkroner/MSI-Net" style="color:#88f;">HuggingFace</a>
+      (revision <code>d950b35</code>).<br>
+      No fine-tuning — natural-scene prior only. This is what Foveacast V1 shipped (via TFJS).
+    </td>
+  </tr>
+  <tr>
+    <td>V1 — stock MSI-Net (TFJS)</td>
+    <td colspan="2">
+      From Foveacast's <code>spike/unisal-onnx-research</code> branch,
+      <code>docs/spikes/comparison/</code>. Same SALICON weights as "Stock" above,
+      but run through the V1 TensorFlow.js pipeline at 120&times;160 resolution.
+    </td>
+  </tr>
+  <tr>
+    <td>V2 — UNISAL (ORT)</td>
+    <td colspan="2">
+      From the same Foveacast branch. UNISAL architecture (Droste et al. 2020),
+      SALICON-pretrained, run via ONNX Runtime Web. Different architecture, same
+      natural-scene training data limitation.
+    </td>
+  </tr>
+  <tr>
+    <td><strong>Ground truth</strong></td>
+    <td colspan="2">
+      Real eye-tracking from the <a href="https://doi.org/10.1145/3544548.3581096" style="color:#88f;">UEyes study</a>
+      (Jiang et al. 2023, 62 participants). <code>saliency_maps/heatmaps_3s/</code>
+      from the Zenodo deposit (CC BY 4.0).
+    </td>
+  </tr>
+</table>
+
+<p>
+  Full training configuration and how to run your own experiments:
+  see <a href="../../docs/training-guide.md" style="color:#88f;">docs/training-guide.md</a>.
+  The experiment log there tracks every run with its key metrics and selection rationale.
+</p>
+
 <h2>ACS Welcome Page — full V1 → V2 → V3 comparison</h2>
 <p>
   The ACS (American Community Survey) welcome page is one of the two screenshots in the
