@@ -16,9 +16,52 @@ Fine-tuned MSI-Net vs stock (SALICON-pretrained) on the held-out UEyes test spli
 | **KLD** (KL divergence, lower better) | 0.6574 ± 0.210 | 1.1682 ± 0.246 | **-44%** |
 | **NSS** (normalised scanpath saliency, higher better) | 2.2879 ± 0.605 | 1.5776 ± 0.451 | **+45%** |
 
-Fine-tuning on UI content closes the gap between "natural-scene saliency model" and "model that knows what a button is." Visual comparison of stock vs fine-tuned vs real eye-tracking ground truth available at [`benchmark/screenshots/comparison.html`](benchmark/screenshots/comparison.html).
+Fine-tuning on UI content closes the gap between "natural-scene saliency model" and "model that knows what a button is." Here's what that looks like on a real UI (the ACS Welcome page, with UEyes ground-truth eye-tracking for reference):
+
+| Source screenshot | Ground truth (real eye-tracking) | Stock MSI-Net (SALICON-only) | Fine-tuned on UEyes |
+|---|---|---|---|
+| ![source](benchmark/screenshots/acs-welcome-source.png) | ![ground truth](benchmark/screenshots/acs-welcome-ground-truth.png) | ![stock](benchmark/screenshots/acs-welcome-v3-stock.png) | ![fine-tuned](benchmark/screenshots/acs-welcome-v3-finetuned.png) |
+
+The stock model produces a diffuse centrality blob. The fine-tuned model finds the "Begin" button, the sidebar navigation, and the header — matching where real users actually looked. Full visual comparison across four UI categories at [`benchmark/screenshots/comparison.html`](benchmark/screenshots/comparison.html).
 
 The release artefact is a 57 MB `.onnx` file (FP16 quantised, opset 17). PyTorch ↔ onnxruntime CPU parity validated at max abs err < 1e-3.
+
+## Quick start — inference only
+
+If you just want to run the model on a screenshot (no training, no dataset):
+
+```python
+import numpy as np
+import onnxruntime as ort
+from PIL import Image
+
+# Load the ONNX model (download from GitHub Releases when available,
+# or export locally via: python -m foveacast_training.export_onnx ...)
+sess = ort.InferenceSession("foveacast-v3.onnx")
+
+# Preprocess: resize to 240×320, RGB float32 in [0, 255]
+img = Image.open("my-screenshot.png").convert("RGB").resize((320, 240))
+x = np.array(img, dtype=np.float32).transpose(2, 0, 1)[np.newaxis]  # (1, 3, 240, 320)
+
+# Run inference
+saliency = sess.run(["output"], {"input": x})[0]  # (1, 1, 240, 320), values in [0, 1]
+```
+
+The output is a single-channel saliency map normalised to [0, 1]. Higher values = higher predicted attention. Resize back to your original image dimensions and overlay as a heatmap.
+
+## Limitations and intended use
+
+The model is trained on the [UEyes dataset](https://doi.org/10.1145/3544548.3581096) — 1,980 UI screenshots across four categories (desktop, mobile, web, poster) with eye-tracking from 62 participants. It predicts where users are likely to look on a UI screenshot.
+
+**Known limitations:**
+
+- **Training distribution.** UEyes is primarily Western-language desktop and mobile UI from 2020–2022. The model may not generalise well to right-to-left layouts, non-Latin text, dark-mode UIs, or design patterns that emerged after the dataset was collected.
+- **Participant demographics.** The 62 participants in the UEyes study were from a specific demographic pool (see the [UEyes paper](https://doi.org/10.1145/3544548.3581096) for details). Saliency predictions reflect the viewing patterns of that group, not a universal human baseline.
+- **Resolution.** The model operates at 240×320 — small UI elements (fine text, tiny icons) below that resolution's ability to resolve may not produce meaningful saliency signal.
+- **Not a click predictor.** Saliency predicts visual attention ("where do eyes go"), not interaction intent ("where will users click"). High saliency on a decorative element does not mean users will interact with it.
+- **Single-image, no context.** The model sees one screenshot at a time. It has no concept of user task, scroll position, prior page, or dynamic content.
+
+**Intended use:** early-stage design feedback on UI layouts — "does the hero image compete with the CTA for attention?" Not a replacement for real user testing.
 
 ## What we're trying to do, specifically
 
@@ -211,6 +254,43 @@ See [`docs/training-guide.md`](docs/training-guide.md) for:
 MSI-Net was trained on SALICON — 10,000 images with mouse-as-proxy-for-gaze data and 5,000 with real eye-tracking. That training gave the model a good prior for how humans look at images in general: contrast, edges, faces, centrality. Fine-tuning from those pretrained weights on 1,980 UI screenshots is cheap and effective; training from random initialisation on 1,980 screenshots alone would produce a weaker model because 1,980 is small.
 
 The exception would be if we wanted to train an architecture for which no UI-trained checkpoint is available — which is an interesting research question but out of scope for a repo whose job is to produce something Foveacast can ship.
+
+## How to cite this work
+
+If you use the fine-tuned model or this training pipeline in your research, please cite both the upstream works and this project:
+
+```bibtex
+@software{hawkins2026foveacast_training,
+  title   = {foveacast-training: UI-aware saliency model via MSI-Net fine-tuned on UEyes},
+  author  = {Hawkins, Ken},
+  year    = {2026},
+  url     = {https://github.com/khawkins98/foveacast-training},
+  license = {MIT}
+}
+
+@article{kroner2020contextual,
+  title   = {Contextual Encoder-Decoder Network for Visual Saliency Prediction},
+  author  = {Kroner, Alexander and Senden, Mario and Driessens, Kurt and Goebel, Rainer},
+  journal = {Neural Networks},
+  volume  = {129},
+  pages   = {261--270},
+  year    = {2020},
+  doi     = {10.1016/j.neunet.2020.05.004}
+}
+
+@inproceedings{jiang2023ueyes,
+  title     = {UEyes: Understanding Visual Saliency across User Interface Types},
+  author    = {Jiang, Yue and Leiva, Luis A. and Rezazadegan Tavakoli, Hamed and
+               Houssel, Paul R. B. and Kylm{\"a}l{\"a}, Julia and Oulasvirta, Antti},
+  booktitle = {Proceedings of the 2023 CHI Conference on Human Factors in Computing Systems},
+  articleno = {285},
+  pages     = {1--21},
+  year      = {2023},
+  doi       = {10.1145/3544548.3581096}
+}
+```
+
+Structured citation metadata also available in [`CITATION.cff`](CITATION.cff).
 
 ## Licences, in one place
 

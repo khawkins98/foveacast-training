@@ -2,7 +2,7 @@
 
 This document describes the end-to-end shape of the training pipeline in this repo and the interface it exposes to its downstream consumer, [Foveacast](https://github.com/khawkins98/Foveacast).
 
-It is forward-looking: most modules mentioned here do not exist in code yet. The goal is to make the target architecture reviewable *before* the code lands so that Phase 2 onwards has a clear frame to build against. Each component has a status marker (**[landed]**, **[next]**, **[later]**) so the gap between plan and reality is visible at a glance.
+The core pipeline is complete: model architecture, dataset loader, training loop, evaluation, and ONNX export are all landed and tested. Status markers on each component (**[landed]**, **[next]**, **[later]**) track what's shipped vs what's planned for future work.
 
 See [`README.md`](README.md) for how to run the pipeline, [`LEARNINGS.md`](LEARNINGS.md) for the decisions that shaped it, and [issue #1](https://github.com/khawkins98/foveacast-training/issues/1) for the phased plan that gets us there.
 
