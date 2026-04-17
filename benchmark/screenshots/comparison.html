@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 7 — Qualitative Saliency Comparison</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #111; color: #eee; padding: 2rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 0.5rem; color: #aaa; border-bottom: 1px solid #333; padding-bottom: 0.3rem; }
+  p { font-size: 0.85rem; color: #888; margin-bottom: 1rem; max-width: 80ch; line-height: 1.5; }
+  .row { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .card { flex: 1; min-width: 200px; max-width: 400px; }
+  .card img { width: 100%; border-radius: 4px; display: block; }
+  .card .label { font-size: 0.7rem; color: #999; text-align: center; margin-top: 0.3rem; }
+  .card .label strong { color: #fff; }
+  .verdict { background: #1a2a1a; border: 1px solid #2a4a2a; border-radius: 6px; padding: 1rem; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+  .verdict strong { color: #6c6; }
+  .metric-table { border-collapse: collapse; margin: 1rem 0; font-size: 0.8rem; }
+  .metric-table th, .metric-table td { padding: 0.3rem 0.8rem; border: 1px solid #333; text-align: right; }
+  .metric-table th { background: #222; color: #aaa; text-align: left; }
+  .metric-table .better { color: #6c6; }
+</style>
+</head>
+<body>
+
+<h1>Phase 7 — Does the fine-tuned model hit UI targets?</h1>
+<p>
+  Same MSI-Net architecture, two different weight sets. <strong>Stock</strong> was trained on
+  SALICON (natural photographs). <strong>Fine-tuned</strong> was trained on UEyes (1,980 UI
+  screenshots with real eye-tracking). The difference is purely which weights are loaded —
+  not a runtime parameter. Foveacast ships one <code>.onnx</code> and that's the model.
+</p>
+
+<div class="verdict">
+  <strong>Quantitative result (Phase 6, 108-image held-out test):</strong><br>
+  <table class="metric-table">
+    <tr><th>Metric</th><th>Fine-tuned</th><th>Stock</th><th>Delta</th></tr>
+    <tr><td>CC (higher better)</td><td class="better">0.7068</td><td>0.4934</td><td class="better">+43%</td></tr>
+    <tr><td>KLD (lower better)</td><td class="better">0.6574</td><td>1.1682</td><td class="better">−44%</td></tr>
+    <tr><td>NSS (higher better)</td><td class="better">2.2879</td><td>1.5776</td><td class="better">+45%</td></tr>
+  </table>
+  This page shows whether those numbers match visual reality.
+</div>
+
+<h2>ACS Welcome Page — full V1 → V2 → V3 comparison</h2>
+<p>
+  The ACS (American Community Survey) welcome page is one of the two screenshots in the
+  Foveacast comparison set that has UEyes ground truth. Look at where the ground truth
+  shows real users looked (the "Begin" button, the header, the sidebar navigation) and
+  whether the fine-tuned model picks those up while the stock model doesn't.
+</p>
+
+<div class="row">
+  <div class="card">
+    <img src="./acs-welcome-source.png" alt="ACS Welcome source">
+    <div class="label">Source screenshot</div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-ground-truth.png" alt="ACS Welcome ground truth">
+    <div class="label"><strong>Ground truth</strong> (real eye-tracking)</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <img src="./acs-welcome-v1-msinet.png" alt="V1 MSI-Net">
+    <div class="label">V1 — stock MSI-Net (TFJS)</div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-v2-unisal.png" alt="V2 UNISAL">
+    <div class="label">V2 — UNISAL (ORT)</div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-v3-stock.png" alt="V3 stock">
+    <div class="label">V3 — stock MSI-Net (our PyTorch port)</div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-v3-finetuned.png" alt="V3 fine-tuned">
+    <div class="label"><strong>V3 — fine-tuned on UEyes</strong></div>
+  </div>
+</div>
+
+<h2>UEyes Test Samples — stock vs fine-tuned vs ground truth</h2>
+<p>
+  Four images from the held-out UEyes test split (never seen during training), one per UI
+  category. For each: compare the ground truth (where real users actually looked) to the
+  stock prediction (centrality-biased) and the fine-tuned prediction (UI-aware). The
+  question is whether the fine-tuned model's hotspots land on UI elements (buttons, menus,
+  content blocks) rather than just the geometric centre.
+</p>
+
+<h2 style="color:#ccc; font-size:0.95rem;">Desktop — 824f2b</h2>
+<div class="row">
+  <div class="card"><img src="./ueyes-comparison/824f2b-source.png" alt="source"><div class="label">Source</div></div>
+  <div class="card"><img src="./ueyes-comparison/824f2b-ground-truth.png" alt="ground truth"><div class="label"><strong>Ground truth</strong></div></div>
+  <div class="card"><img src="./ueyes-comparison/824f2b-stock.png" alt="stock"><div class="label">Stock MSI-Net</div></div>
+  <div class="card"><img src="./ueyes-comparison/824f2b-finetuned.png" alt="finetuned"><div class="label"><strong>Fine-tuned</strong></div></div>
+</div>
+
+<h2 style="color:#ccc; font-size:0.95rem;">Mobile — b44e33</h2>
+<div class="row">
+  <div class="card"><img src="./ueyes-comparison/b44e33-source.png" alt="source"><div class="label">Source</div></div>
+  <div class="card"><img src="./ueyes-comparison/b44e33-ground-truth.png" alt="ground truth"><div class="label"><strong>Ground truth</strong></div></div>
+  <div class="card"><img src="./ueyes-comparison/b44e33-stock.png" alt="stock"><div class="label">Stock MSI-Net</div></div>
+  <div class="card"><img src="./ueyes-comparison/b44e33-finetuned.png" alt="finetuned"><div class="label"><strong>Fine-tuned</strong></div></div>
+</div>
+
+<h2 style="color:#ccc; font-size:0.95rem;">Poster — 0e136e</h2>
+<div class="row">
+  <div class="card"><img src="./ueyes-comparison/0e136e-source.png" alt="source"><div class="label">Source</div></div>
+  <div class="card"><img src="./ueyes-comparison/0e136e-ground-truth.png" alt="ground truth"><div class="label"><strong>Ground truth</strong></div></div>
+  <div class="card"><img src="./ueyes-comparison/0e136e-stock.png" alt="stock"><div class="label">Stock MSI-Net</div></div>
+  <div class="card"><img src="./ueyes-comparison/0e136e-finetuned.png" alt="finetuned"><div class="label"><strong>Fine-tuned</strong></div></div>
+</div>
+
+<h2 style="color:#ccc; font-size:0.95rem;">Web — 8f9844</h2>
+<div class="row">
+  <div class="card"><img src="./ueyes-comparison/8f9844-source.png" alt="source"><div class="label">Source</div></div>
+  <div class="card"><img src="./ueyes-comparison/8f9844-ground-truth.png" alt="ground truth"><div class="label"><strong>Ground truth</strong></div></div>
+  <div class="card"><img src="./ueyes-comparison/8f9844-stock.png" alt="stock"><div class="label">Stock MSI-Net</div></div>
+  <div class="card"><img src="./ueyes-comparison/8f9844-finetuned.png" alt="finetuned"><div class="label"><strong>Fine-tuned</strong></div></div>
+</div>
+
+<p style="margin-top:2rem; color:#555; font-size:0.75rem;">
+  Generated by foveacast-training Phase 7 (scripts/render_saliency.py).
+  Heatmap colormap: inferno @ 50% alpha. Ground truth from UEyes (Jiang et al. 2023, CC BY 4.0).
+</p>
+
+</body>
+</html>
