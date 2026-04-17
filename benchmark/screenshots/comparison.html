@@ -141,6 +141,43 @@
   </div>
 </div>
 
+<h2>FP32 vs FP16 ONNX — does quantisation affect quality?</h2>
+<p>
+  The release artefact can ship as fp32 (106 MB) or fp16 (57 MB). FP16 halves the conv
+  weights to 16-bit floats. Max pixel diff across the comparison set is 0.78% — less than
+  one shade of gray on a 256-level scale. If you can't tell these apart, ship fp16.
+</p>
+
+<div class="row">
+  <div class="card">
+    <img src="./acs-welcome-v3-fp32-onnx.png" alt="fp32">
+    <div class="label">FP32 ONNX (106 MB)</div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-v3-fp16-onnx.png" alt="fp16">
+    <div class="label"><strong>FP16 ONNX (57 MB)</strong></div>
+  </div>
+  <div class="card">
+    <img src="./acs-welcome-ground-truth.png" alt="ground truth">
+    <div class="label">Ground truth (reference)</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card">
+    <img src="./ueyes-8f9844-fp32-onnx.png" alt="fp32 web">
+    <div class="label">FP32 — web page sample</div>
+  </div>
+  <div class="card">
+    <img src="./ueyes-8f9844-fp16-onnx.png" alt="fp16 web">
+    <div class="label"><strong>FP16 — web page sample</strong></div>
+  </div>
+  <div class="card">
+    <img src="./ueyes-8f9844-ground-truth.png" alt="ground truth">
+    <div class="label">Ground truth (reference)</div>
+  </div>
+</div>
+
 <h2>UEyes Test Samples — stock vs fine-tuned vs ground truth</h2>
 <p>
   Four images from the held-out UEyes test split (never seen during training), one per UI
