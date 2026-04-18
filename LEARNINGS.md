@@ -271,7 +271,37 @@ Smoke-tested by running `--prototype` to completion, hand-editing the resulting 
 - *`quant_pre_process` before `quantize_static`.* ORT's docs call this optional; in practice skipping it is the #1 cause of "Could not infer shape of tensor X" failures at quantisation time. The graph's shape-inference state from `torch.onnx.export` isn't always complete enough for the quantiser to reason about.
 - *100 calibration samples.* ORT docs recommend 100-500. Saliency output is a well-behaved `[0, 1]`-ish range; diminishing returns kick in fast. If a model's parity gate fails, bumping to 300 is the first knob to turn.
 
-Quality gate is comparative: ship INT8 as primary if CC/KLD/NSS delta vs FP16 is <3% per metric, fall back to FP16 otherwise. Measurement happens post-training in the same pass as the stock-vs-fine-tuned comparison. `eval.py --onnx` for evaluating ONNX models directly didn't land in this PR — all quality comparisons are on the PyTorch `best.pt`, and the INT8 artefact's quality is inferred from PyTorch↔INT8-ORT parity at realistic inputs.
+Quality gate is comparative: ship INT8 as primary if CC/KLD/NSS delta vs FP16 is <3% per metric, fall back to FP16 otherwise. Measurement happens post-training in the same pass as the stock-vs-fine-tuned comparison. `eval.py --onnx` grew a second life as an ONNX-aware evaluator during this work — see the 2026-04-18 entry below.
+
+## 2026-04-18 — INT8 quality gate: the structural parity number lied, the real metric answer is fine
+
+Spent a chunk of time chasing the INT8 structural parity gate (PyTorch FP32 vs INT8 ONNX, random-uniform inputs) on the three multi-duration artefacts. First run with the saturated-input trial bank showed max-pixel error of 4e-1 on the 1s model — catastrophic. Removing the saturated trials (static PTQ calibrates against a sample distribution; saturated inputs fall outside it and blow up the clamp error) brought max error down to 8e-2 on 1s. But the 3s and 7s models landed at 1.1e-1 and 1.4e-1 respectively, tripping a 1e-1 tolerance.
+
+Three ways to play it: loosen the tolerance until everything passes (meaningless gate), fall back to FP16-only (punt), or build a real CC/KLD/NSS gate via `eval.py --onnx`. Went with the third. `make_inferencer(path, device)` in `eval.py` now dispatches to PyTorch or ONNX Runtime based on file extension, so the rest of the evaluation pipeline stays backend-agnostic — same split loading, same metric computation, same comparison-table formatting. ~40 lines total.
+
+Running FP16 ONNX through the new eval path showed CC/KLD/NSS matching PyTorch `best.pt` to 4 decimal places across all three windows, which is a good sanity signal that the ONNX plumbing is correct before trusting it on INT8.
+
+The INT8 numbers were the surprise:
+
+| window | metric | PyTorch | INT8 | relative delta |
+|---|---|---|---|---|
+| 1s | CC | 0.5870 | 0.5869 | −0.02% |
+| 1s | KLD | 1.1221 | 1.1407 | +1.66% worse |
+| 1s | NSS | 2.3984 | 2.3968 | −0.07% |
+| 3s | CC | 0.7068 | 0.7062 | −0.08% |
+| 3s | KLD | 0.6574 | 0.6745 | +2.60% worse |
+| 3s | NSS | 2.2879 | 2.2859 | −0.09% |
+| 7s | CC | 0.7523 | 0.7519 | −0.05% |
+| 7s | KLD | 0.4402 | 0.4488 | +1.95% worse |
+| 7s | NSS | 1.8892 | 1.8874 | −0.10% |
+
+**All three INT8 models pass the <3% per-metric delta criterion, comfortably.** Random-uniform structural parity showed 8-14% max-pixel error across the three; real UEyes images show <3% metric degradation. The structural number was a lower bound — it *is* real, but it lives on pixels nobody looks at (background regions with near-zero saliency values where small absolute errors are large relative errors without visual consequence). The metric evaluation weights pixels by where the real ground truth actually lands, and INT8's calibration is fit to exactly that distribution.
+
+Lesson for future quantisation work: **don't trust random-uniform parity numbers as a quality gate for statically-calibrated models.** They overestimate perceived quality loss by roughly 3-5× in this case. If a structural gate is needed as a fast sanity check, the right design is to include a small realistic-input sample (a handful of UEyes images, same family as the calibration set) in the trial bank. The current `quantize_int8.py` leaves that as a follow-up if the pattern recurs.
+
+KLD is the most sensitive metric — all three INT8 models show +1.7% to +2.6% KLD regression. That's expected: KLD measures distribution divergence, and INT8's discretisation most affects tail values (low-confidence regions), which shift the predicted distribution's shape slightly. CC and NSS are essentially unmoved because they respond to where the peaks land, and peaks survive INT8 cleanly.
+
+Ship decision: all three INT8 artefacts go alongside the FP16 ones in the v0.2.0 release. Consumers pick based on their own size/quality tradeoff (57 MB FP16 vs 32 MB INT8 per duration).
 
 ## 2026-04-17 — Phase 10 integration: heatmap.js was distorting the visual output all along
 
