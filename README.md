@@ -1,6 +1,8 @@
 # foveacast-training
 
-**[v0.1.0 released](https://github.com/khawkins98/foveacast-training/releases/tag/v0.1.0)** — UI-aware saliency model, 57 MB FP16 ONNX. Fine-tuned MSI-Net beats stock by 43-45% on all standard saliency metrics.
+**[v0.2.0 released](https://github.com/khawkins98/foveacast-training/releases/tag/v0.2.0)** — Multi-duration UI saliency at 1s / 3s / 7s viewing windows. Three fine-tuned MSI-Net models, each shipped at FP16 (57 MB) and INT8 (32 MB). Beats stock SALICON-only by +25–64% on CC/NSS and −36 to −44% on KLD across all three durations.
+
+Previous: [v0.1.0](https://github.com/khawkins98/foveacast-training/releases/tag/v0.1.0) shipped the 3s model only.
 
 Training pipeline for the saliency model that ships in [Foveacast](https://github.com/khawkins98/Foveacast).
 
@@ -85,9 +87,17 @@ Jiang et al. (2023) introduced UEyes and demonstrated its value by fine-tuning s
 
 Three tradeoffs worth knowing about, on top of the model-inherent limitations in [Limitations and intended use](#limitations-and-intended-use) above.
 
-- **Technique works; numbers match the paper's ballpark.** CC/KLD/NSS gains of +43–45% over stock on the held-out UEyes test split are the same order of magnitude the paper reports for its fine-tuned models. We don't claim a novel technique; we claim faithful productisation of a known good one.
-- **The shipped artefact is FP16, not FP32.** The released `.onnx` is a half-precision quantisation of the trained weights: ~57 MB instead of ~106 MB, at a max-pixel parity error of <1e-3. This is deliberate — browser download budget matters — but it means the shipping model is a slightly degraded version of the training-time model. The FP32 version is available if someone wants it at 2× the size.
-- **An INT8 path drops size further where quality allows.** Static post-training quantisation takes each artefact to ~26 MB at a max-pixel parity error of ~1e-2. For three-duration shipping this is the difference between ~171 MB total (FP16) and ~78 MB total (INT8). Per-model quality is gated against the FP16 baseline; INT8 ships only for models where the CC/KLD/NSS delta is acceptable.
+- **Technique works; numbers match the paper's ballpark.** Fine-tuned models beat stock SALICON-only MSI-Net by +25–64% on CC/NSS and reduce KLD by 36–44% on the held-out UEyes test split across the 1s / 3s / 7s models. The same order of magnitude the UEyes paper reports for its fine-tuned models. We don't claim a novel technique; we claim faithful productisation of a known good one.
+- **FP16 is essentially lossless at the metric level.** FP32 → FP16 halves the artefact (~106 MB → ~57 MB) at a max-pixel parity error around 1–2e-3. On the real quality signal — CC/KLD/NSS on the UEyes test split — FP16 matches FP32 PyTorch to four decimal places across all three models. The "lossy" in FP16 lives in pixels nobody looks at.
+- **INT8 trades another ~43% size reduction for ≤3% metric regression.** Static post-training quantisation calibrated on UEyes training images takes each artefact to ~32 MB (70% smaller than FP32, 43% smaller than FP16). Using the 3s model as representative:
+
+| precision | size | 3s CC | 3s KLD | 3s NSS |
+|---|---|---|---|---|
+| FP32 PyTorch (reference) | 106 MB | 0.7068 | 0.6574 | 2.2879 |
+| FP16 ONNX | 57 MB | 0.7068 | 0.6574 | 2.2879 |
+| INT8 ONNX | 32 MB | 0.7062 (−0.08%) | 0.6745 (+2.60%) | 2.2859 (−0.09%) |
+
+KLD is the most sensitive metric — it regresses 1.7–2.6% across all three models. CC and NSS move by less than 0.1% in all cases. Full per-duration numbers and the quantisation-quality commentary in [`docs/training-guide.md`](docs/training-guide.md); the investigation narrative (structural parity vs metric quality) in [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Attribution and citation
 

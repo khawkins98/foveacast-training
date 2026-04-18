@@ -221,10 +221,57 @@ Track every full run here so the selection rationale is visible. The shipped con
 
 | name | date | saliency | LR | epochs (best) | val CC | test CC | test KLD | test NSS | notes |
 |---|---|---|---|---|---|---|---|---|---|
-| **v3-baseline (shipped)** | 2026-04-16 | heatmaps_3s | 1e-6 | 30 (25) | 0.7247 | 0.7068 | 0.6574 | 2.2879 | first run; beats stock 43-45% on all metrics |
-| stock SALICON (reference) | — | — | — | — | — | 0.4934 | 1.1682 | 1.5776 | no fine-tuning; pretrained-only baseline |
+| **v3-1s** (shipped v0.2.0) | 2026-04-17 | heatmaps_1s | 1e-6 | 21 (16) | 0.6117 | 0.5870 | 1.1221 | 2.3984 | first-glance attention; early-stop @ 21 |
+| **v3-3s** (shipped v0.1.0, re-shipped in v0.2.0) | 2026-04-16 | heatmaps_3s | 1e-6 | 30 (25) | 0.7247 | 0.7068 | 0.6574 | 2.2879 | early exploration; v0.1.0 baseline |
+| **v3-7s** (shipped v0.2.0) | 2026-04-18 | heatmaps_7s | 1e-6 | 30 (28) | 0.7647 | 0.7523 | 0.4402 | 1.8892 | full-viewing; highest absolute CC |
+| stock SALICON @ 1s window | — | — | — | — | — | 0.3670 | 1.7642 | 1.4607 | stock eval'd at 1s ground truth |
+| stock SALICON @ 3s window | — | — | — | — | — | 0.4934 | 1.1682 | 1.5776 | stock eval'd at 3s ground truth (v0.1.0 reference) |
+| stock SALICON @ 7s window | — | — | — | — | — | 0.6019 | 0.7829 | 1.4794 | stock eval'd at 7s ground truth |
 
-*Add rows as new experiments land. Keep the shipped row first and bold.*
+*Add rows as new experiments land. Keep shipped rows bold.*
+
+### Fine-tuned vs stock across all three windows
+
+Relative improvement is largest at the 1s window (+60% CC) and smallest at the 7s window (+25% CC). The pretrained SALICON prior is least useful at 1s — natural-scene saliency models don't know what eyes hit in a UI's first second. KLD improvement is roughly constant (~40%) across all three windows, which is a nice consistency signal about the training pipeline.
+
+| window | CC improvement | KLD improvement | NSS improvement |
+|---|---|---|---|
+| 1s | +60% | −36% | +64% |
+| 3s | +43% | −44% | +45% |
+| 7s | +25% | −44% | +28% |
+
+Cross-window note: absolute CC of the 7s fine-tuned model (0.7523) is higher than the 3s (0.7068) and 1s (0.5870). That's not because the 7s model is "better" — the 7s ground truth is smoother (more fixations averaged), so it's an easier prediction task. Each model answers a different product question; pick based on what you want to measure.
+
+## Precision variants and quality
+
+The v0.2.0 release ships each model at two precisions. Both come from the same trained weights; only the post-training quantisation differs.
+
+**FP16 (~57 MB per model)** — half-precision via `onnxconverter_common.convert_float_to_float16`. Max-pixel parity against PyTorch FP32 around 1–2e-3 depending on model. Metric-level parity (CC/KLD/NSS on the test split) matches FP32 PyTorch to 4 decimal places across all three models. Essentially lossless at the level anyone will measure.
+
+**INT8 (~32 MB per model)** — static post-training quantisation via `onnxruntime.quantization.quantize_static`, calibrated on 100 random UEyes training images. More aggressive compression, small but measurable quality regression. Per-model numbers on the UEyes test split (108 images):
+
+| window | metric | PyTorch FP32 | INT8 ONNX | relative delta |
+|---|---|---|---|---|
+| 1s | CC | 0.5870 | 0.5869 | −0.02% |
+| 1s | KLD | 1.1221 | 1.1407 | +1.66% worse |
+| 1s | NSS | 2.3984 | 2.3968 | −0.07% |
+| 3s | CC | 0.7068 | 0.7062 | −0.08% |
+| 3s | KLD | 0.6574 | 0.6745 | +2.60% worse |
+| 3s | NSS | 2.2879 | 2.2859 | −0.09% |
+| 7s | CC | 0.7523 | 0.7519 | −0.05% |
+| 7s | KLD | 0.4402 | 0.4488 | +1.95% worse |
+| 7s | NSS | 1.8892 | 1.8874 | −0.10% |
+
+KLD is the most sensitive metric — all three INT8 models regress 1.7–2.6%. That's expected: KLD measures distribution divergence, and INT8's discretisation most affects low-confidence tail values, which shifts the predicted distribution's shape slightly. CC and NSS move by less than 0.1% in all cases; the peaks survive INT8 cleanly.
+
+**How to choose:**
+
+- **FP16 (57 MB)** — default choice. Near-PyTorch quality, fits modern browser-cache budgets.
+- **INT8 (32 MB)** — use when download size is the binding constraint (multi-model fetches, low-bandwidth users, strict cold-load budgets). Accept ~2% KLD regression; visual quality on benchmark images is indistinguishable.
+
+FP32 ONNX is available via `export_onnx.py` without the `--fp16` flag (~106 MB per model) but isn't attached to the release — re-export from the `best.pt` checkpoint if you need FP32.
+
+The investigation story behind why INT8's random-uniform structural parity numbers (8–14% max-pixel error) looked alarming but the real metric quality was fine is in [`LEARNINGS.md`](../LEARNINGS.md) under 2026-04-18.
 
 ---
 
