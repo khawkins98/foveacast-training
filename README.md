@@ -148,6 +148,7 @@ foveacast-training/
 │
 ├── benchmark/screenshots/        # qualitative comparison images + HTML viewer
 ├── docs/training-guide.md        # how to reproduce, customise, and compare weight sets
+├── docs/release-process.md       # how to cut a release (version bump, tag, GitHub Release, artefact upload)
 ├── weights/                      # gitignored; imported pretrained weights (.pt)
 └── runs/                         # gitignored; training checkpoints + history
 ```
@@ -274,6 +275,10 @@ See [`docs/training-guide.md`](docs/training-guide.md) for:
 - The five knobs worth turning (saliency variant, learning rate, input resolution, epochs, validation split)
 - Step-by-step custom experiment workflow
 - A growing experiment log that tracks every run with its key metrics
+
+## Cutting a release
+
+See [`docs/release-process.md`](docs/release-process.md) for the end-to-end release checklist: version bump, pre-release sanity, tag sequence, `gh release create` with artefact upload, and the common pitfalls. Written as something you can follow top-to-bottom.
 
 ## Why not train from scratch?
 

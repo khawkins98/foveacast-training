@@ -96,7 +96,7 @@ Confirm with the maintainer before:
 - `rm -rf` anywhere inside the repo.
 - Deleting or renaming `data/ueyes/`, `weights/`, or `runs/` — these take real time to rebuild.
 - Modifying `pyproject.toml` dependency pins that force a full reinstall.
-- Publishing to GitHub Releases, Zenodo, or HuggingFace.
+- Publishing to GitHub Releases, Zenodo, or HuggingFace. The step-by-step procedure lives in [`docs/release-process.md`](docs/release-process.md) — follow the checklist rather than reconstructing it each time.
 
 Creating local commits, running `ruff` / `pytest`, and pushing a non-main branch are routine and don't need confirmation.
 
