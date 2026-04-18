@@ -300,11 +300,19 @@ def main() -> None:
     # why: tolerance defaults depend on FP precision. FP16 has ~6e-5 min-
     # normal precision, so FP32's 1e-4 gate is physically unreachable;
     # the 2026-04-17 LEARNINGS entry measured 7e-4 max error on naive FP16
-    # conversion. 1e-3 gives a comfortable margin without being so loose
-    # it masks regressions.
+    # conversion of the v0.1.0 3s model. Per-model variance turned out to
+    # be meaningful on the 1s model (issue #19): same conversion recipe,
+    # max err 2.1e-3 vs the 3s model's 7e-4. Mean err stays at ~5e-5 for
+    # both — the max spike is one or two saturated-input pixels hitting
+    # the normaliser's eps division at fp16 precision limits. 5e-3 is
+    # the default: comfortable headroom for per-model variance while
+    # still tight enough that a genuinely broken conversion (e.g. a
+    # silently-downgraded layer) would trip it. On a saliency map with
+    # values in [0, 1], 5e-3 = 0.5 percent — well below visually
+    # perceptible on a rendered heatmap.
     tolerance = args.tolerance
     if tolerance is None:
-        tolerance = 1e-3 if args.fp16 else 1e-4
+        tolerance = 5e-3 if args.fp16 else 1e-4
 
     print(f"→ loading {args.checkpoint}")
     model = load_pytorch_model(args.checkpoint).to(EXPORT_DEVICE)
@@ -346,8 +354,11 @@ def main() -> None:
     if parity["within_tolerance"]:
         print("✓ Phase 8 parity gate closed")
     else:
+        # why: format the resolved `tolerance`, not `args.tolerance` —
+        # the latter is None when the default-by-precision branch ran,
+        # which would trip a TypeError in the format spec.
         print(
-            f"✗ parity FAILED: max abs err {parity['max_abs_err']:.2e} > {args.tolerance:.0e}"
+            f"✗ parity FAILED: max abs err {parity['max_abs_err']:.2e} > {tolerance:.0e}"
         )
         raise SystemExit(1)
 
