@@ -1,6 +1,6 @@
 [project]
 name = "foveacast-training"
-version = "0.1.0"
+version = "0.2.0"
 description = "Training pipeline for the saliency model that ships in Foveacast."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,6 +26,13 @@ dependencies = [
   # gate for producing a release artefact. ~30 MB install; small enough
   # to keep in core rather than a dedicated extras group.
   "onnxruntime>=1.17",
+  # why: onnxconverter-common is the float16 converter used by
+  # `export_onnx.py --fp16`. Pure Python, ~1 MB; added to core rather
+  # than a separate extras group because the v0.2.0 release workflow
+  # (issue #19) produces FP16 artefacts by default and a downstream
+  # re-exporter should not have to discover an extras group to reproduce
+  # them.
+  "onnxconverter-common>=1.14",
 ]
 
 [project.optional-dependencies]

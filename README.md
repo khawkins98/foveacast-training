@@ -1,6 +1,8 @@
 # foveacast-training
 
-**[v0.1.0 released](https://github.com/khawkins98/foveacast-training/releases/tag/v0.1.0)** — UI-aware saliency model, 57 MB FP16 ONNX. Fine-tuned MSI-Net beats stock by 43-45% on all standard saliency metrics.
+**[v0.2.0 released](https://github.com/khawkins98/foveacast-training/releases/tag/v0.2.0)** — Multi-duration UI saliency at 1s / 3s / 7s viewing windows. Three fine-tuned MSI-Net models, each shipped at FP16 (57 MB) and INT8 (32 MB). Beats stock SALICON-only by +25–64% on CC/NSS and −36 to −44% on KLD across all three durations.
+
+Previous: [v0.1.0](https://github.com/khawkins98/foveacast-training/releases/tag/v0.1.0) shipped the 3s model only.
 
 Training pipeline for the saliency model that ships in [Foveacast](https://github.com/khawkins98/Foveacast).
 
@@ -72,6 +74,30 @@ The fix is not swapping to yet another natural-scene-trained model. The fix is t
 The longer-form history — V1 build, V2 ONNX spike, the ground-truth benchmark that exposed the SALICON limitation, the wider model survey, the pivot from a UMSI++ drop-in to this fine-tuning approach — lives in Foveacast's [`LEARNINGS.md`](https://github.com/khawkins98/Foveacast/blob/main/LEARNINGS.md). Read that first if the project's trajectory matters to what you're trying to do here.
 
 For the end-to-end shape of the pipeline in *this* repo — what each module does, how the two repos fit together, and the contract on the `.onnx` artefact Foveacast consumes — see [`ARCHITECTURE.md`](ARCHITECTURE.md). If you're about to open a PR, [`CONTRIBUTING.md`](CONTRIBUTING.md) has the workflow conventions and a docs-lockstep checklist to run through before marking it ready.
+
+## How this differs from the UEyes paper
+
+Jiang et al. (2023) introduced UEyes and demonstrated its value by fine-tuning several existing saliency models on it, reporting large gains on the test split over SALICON-trained originals. In broad strokes we're doing the same thing. The differences are in what happens *after* the fine-tune.
+
+- **One architecture, chosen for licensing.** The paper benchmarks several models to show the dataset is broadly useful. We committed to MSI-Net specifically — MIT-licensed, ~25M params, simple enough to port to PyTorch and export to ONNX cleanly. Research wants breadth; a shipping product wants one good choice with a clean license chain.
+- **Shipping weights, not publishing a benchmark.** The paper's output is a dataset plus metrics. Ours is a `.onnx` file that runs in a browser. Artefact size, onnxruntime-web op coverage, and FP16 / INT8 quantisation are constraints a benchmark paper doesn't have to think about.
+- **Multi-duration as a product feature.** UEyes provides ground truth at 1-second, 3-second, and 7-second viewing windows — first glance, early exploration, full viewing. The paper treats these as axes for study. We train three separate models (tracked in [issue #19](https://github.com/khawkins98/foveacast-training/issues/19)) so the downstream Foveacast app can offer a duration selector — "what's noticed first?" vs "what's noticed eventually?" as side-by-side modes a designer can toggle.
+
+## Practical notes on quality
+
+Three tradeoffs worth knowing about, on top of the model-inherent limitations in [Limitations and intended use](#limitations-and-intended-use) above.
+
+- **Technique works; numbers match the paper's ballpark.** Fine-tuned models beat stock SALICON-only MSI-Net by +25–64% on CC/NSS and reduce KLD by 36–44% on the held-out UEyes test split across the 1s / 3s / 7s models. The same order of magnitude the UEyes paper reports for its fine-tuned models. We don't claim a novel technique; we claim faithful productisation of a known good one.
+- **FP16 is essentially lossless at the metric level.** FP32 → FP16 halves the artefact (~106 MB → ~57 MB) at a max-pixel parity error around 1–2e-3. On the real quality signal — CC/KLD/NSS on the UEyes test split — FP16 matches FP32 PyTorch to four decimal places across all three models. The "lossy" in FP16 lives in pixels nobody looks at.
+- **INT8 trades another ~43% size reduction for ≤3% metric regression.** Static post-training quantisation calibrated on UEyes training images takes each artefact to ~32 MB (70% smaller than FP32, 43% smaller than FP16). Using the 3s model as representative:
+
+| precision | size | 3s CC | 3s KLD | 3s NSS |
+|---|---|---|---|---|
+| FP32 PyTorch (reference) | 106 MB | 0.7068 | 0.6574 | 2.2879 |
+| FP16 ONNX | 57 MB | 0.7068 | 0.6574 | 2.2879 |
+| INT8 ONNX | 32 MB | 0.7062 (−0.08%) | 0.6745 (+2.60%) | 2.2859 (−0.09%) |
+
+KLD is the most sensitive metric — it regresses 1.7–2.6% across all three models. CC and NSS move by less than 0.1% in all cases. Full per-duration numbers and the quantisation-quality commentary in [`docs/training-guide.md`](docs/training-guide.md); the investigation narrative (structural parity vs metric quality) in [`LEARNINGS.md`](LEARNINGS.md).
 
 ## Attribution and citation
 

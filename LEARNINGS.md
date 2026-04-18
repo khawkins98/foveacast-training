@@ -248,6 +248,61 @@ Size difference is negligible (0.1 MB). Ship the naive fp16.
 
 FP8 was also evaluated and ruled out: `onnxruntime-web` has no FP8 op support, and 3 mantissa bits would need quantisation-aware retraining to avoid visible artefacts. INT8 (~26 MB) is the next realistic step if 57 MB turns out to be a problem in Foveacast's browser loading — it needs a calibration dataset and per-tensor scale/zero-point computation, so it's a half-day of work tracked in #15 if needed.
 
+## 2026-04-17 — Multi-duration model training infrastructure (issue #19)
+
+UEyes ships ground truth at three viewing-duration aggregates (`heatmaps_1s`, `heatmaps_3s`, `heatmaps_7s`). v0.1.0 ships one model trained against `heatmaps_3s`. Issue #19 is to train two more — 1s for "what grabs the eye first", 7s for "what's eventually noticed" — so Foveacast can offer a duration selector.
+
+The issue asserted "no code changes needed — just run `--full` with a different `saliency_variant`." Almost true. A few pieces needed to land before the two ~3.5 h runs were safe to kick off:
+
+**`--saliency-variant` as a first-class CLI flag.** Was a constructor arg on `UEyesDataset`; wasn't wired through `train.py`. Threading it through both the train and val dataset instances (easy) and into the run-dir name (so `runs/full-heatmaps_1s-.../` is self-identifying when parallel runs are on disk) took the bulk of the PR.
+
+**`eval.py --time-window`.** Evaluation previously hard-coded `heatmaps_3s` and `fixmaps_3s` — the two-dataset lock-step pattern Phase 6 uses for CC/KLD (heatmap target) vs NSS (fixmap target). Parameterised both off a single `1s|3s|7s` flag so cross-duration evaluation is impossible by accident. Matched-window eval is the right question for #19 ("does the 1s model agree with 1s ground truth?"), not cross-window ("how does 1s do on 3s ground truth?").
+
+**Resume support for interrupted runs.** This one was explicitly out of #19's stated scope but worth doing before committing to 7 h of compute. Each epoch now overwrites `state.pt` with model weights + optimizer moments + scheduler counter + history + next-epoch marker. `--resume state.pt` picks up at the last completed epoch. The resumed trajectory is *not* bit-exact vs an uninterrupted run — DataLoader shuffle order diverges because we don't restore RNG state — but that's fine; the goal of resume is "recover a trained model after a sleep event or OOM", not "reproduce the exact loss curve." State file is ~300 MB per save (model ~100 MB + Adam moments ~200 MB), overwritten each epoch, so no disk-growth concern across a 30-epoch run.
+
+Smoke-tested by running `--prototype` to completion, hand-editing the resulting `state.pt` back to an "after epoch 1" posture, and running `--resume`. History from epoch 1 was preserved, epoch 2 executed, the merged `history.json` had both epochs in order. Good enough; the design is straightforward and the test catches the obvious failure modes (load errors, schema mismatch, optimizer state not restored).
+
+**FP16 as a committed flag, not an ad-hoc conversion.** The v0.1.0 FP16 artefact (`foveacast-v3-fp16.onnx`) was produced via a one-shot `convert_float_to_float16` call from an interactive session — no script in the repo. For three releases that needs to be reproducible, so `export_onnx.py --fp16` is now a first-class flag with a matched 1e-3 parity tolerance (the LEARNINGS entry right above this one covers why naive beats selective). Dep is `onnxconverter-common` — ~1 MB pure-Python, added to core rather than a separate extras group so a downstream re-exporter doesn't need to discover an extras name.
+
+**INT8 static post-training quantisation.** `quantize_int8.py` is new. Produces ~26 MB artefacts (three of those plus three FP16 fallbacks is 6 assets on `v0.2.0`). Design decisions:
+
+- *Static over dynamic quantisation.* Static needs a calibration dataset (100 random UEyes training images here) but produces meaningfully better results on conv-heavy networks. Dynamic would skip calibration but tends to underperform on activation distributions that vary per layer — which is exactly the case for a VGG16-backbone saliency model.
+- *QUInt8 activations + QInt8 weights.* ORT's standard recipe. Activations post-ReLU are always non-negative so QUInt8 (asymmetric, `[0, 255]`) wastes no range on negative values; weights are zero-centred so QInt8 (symmetric, `[-128, 127]`) fits the distribution better.
+- *`quant_pre_process` before `quantize_static`.* ORT's docs call this optional; in practice skipping it is the #1 cause of "Could not infer shape of tensor X" failures at quantisation time. The graph's shape-inference state from `torch.onnx.export` isn't always complete enough for the quantiser to reason about.
+- *100 calibration samples.* ORT docs recommend 100-500. Saliency output is a well-behaved `[0, 1]`-ish range; diminishing returns kick in fast. If a model's parity gate fails, bumping to 300 is the first knob to turn.
+
+Quality gate is comparative: ship INT8 as primary if CC/KLD/NSS delta vs FP16 is <3% per metric, fall back to FP16 otherwise. Measurement happens post-training in the same pass as the stock-vs-fine-tuned comparison. `eval.py --onnx` grew a second life as an ONNX-aware evaluator during this work — see the 2026-04-18 entry below.
+
+## 2026-04-18 — INT8 quality gate: the structural parity number lied, the real metric answer is fine
+
+Spent a chunk of time chasing the INT8 structural parity gate (PyTorch FP32 vs INT8 ONNX, random-uniform inputs) on the three multi-duration artefacts. First run with the saturated-input trial bank showed max-pixel error of 4e-1 on the 1s model — catastrophic. Removing the saturated trials (static PTQ calibrates against a sample distribution; saturated inputs fall outside it and blow up the clamp error) brought max error down to 8e-2 on 1s. But the 3s and 7s models landed at 1.1e-1 and 1.4e-1 respectively, tripping a 1e-1 tolerance.
+
+Three ways to play it: loosen the tolerance until everything passes (meaningless gate), fall back to FP16-only (punt), or build a real CC/KLD/NSS gate via `eval.py --onnx`. Went with the third. `make_inferencer(path, device)` in `eval.py` now dispatches to PyTorch or ONNX Runtime based on file extension, so the rest of the evaluation pipeline stays backend-agnostic — same split loading, same metric computation, same comparison-table formatting. ~40 lines total.
+
+Running FP16 ONNX through the new eval path showed CC/KLD/NSS matching PyTorch `best.pt` to 4 decimal places across all three windows, which is a good sanity signal that the ONNX plumbing is correct before trusting it on INT8.
+
+The INT8 numbers were the surprise:
+
+| window | metric | PyTorch | INT8 | relative delta |
+|---|---|---|---|---|
+| 1s | CC | 0.5870 | 0.5869 | −0.02% |
+| 1s | KLD | 1.1221 | 1.1407 | +1.66% worse |
+| 1s | NSS | 2.3984 | 2.3968 | −0.07% |
+| 3s | CC | 0.7068 | 0.7062 | −0.08% |
+| 3s | KLD | 0.6574 | 0.6745 | +2.60% worse |
+| 3s | NSS | 2.2879 | 2.2859 | −0.09% |
+| 7s | CC | 0.7523 | 0.7519 | −0.05% |
+| 7s | KLD | 0.4402 | 0.4488 | +1.95% worse |
+| 7s | NSS | 1.8892 | 1.8874 | −0.10% |
+
+**All three INT8 models pass the <3% per-metric delta criterion, comfortably.** Random-uniform structural parity showed 8-14% max-pixel error across the three; real UEyes images show <3% metric degradation. The structural number was a lower bound — it *is* real, but it lives on pixels nobody looks at (background regions with near-zero saliency values where small absolute errors are large relative errors without visual consequence). The metric evaluation weights pixels by where the real ground truth actually lands, and INT8's calibration is fit to exactly that distribution.
+
+Lesson for future quantisation work: **don't trust random-uniform parity numbers as a quality gate for statically-calibrated models.** They overestimate perceived quality loss by roughly 3-5× in this case. If a structural gate is needed as a fast sanity check, the right design is to include a small realistic-input sample (a handful of UEyes images, same family as the calibration set) in the trial bank. The current `quantize_int8.py` leaves that as a follow-up if the pattern recurs.
+
+KLD is the most sensitive metric — all three INT8 models show +1.7% to +2.6% KLD regression. That's expected: KLD measures distribution divergence, and INT8's discretisation most affects tail values (low-confidence regions), which shift the predicted distribution's shape slightly. CC and NSS are essentially unmoved because they respond to where the peaks land, and peaks survive INT8 cleanly.
+
+Ship decision: all three INT8 artefacts go alongside the FP16 ones in the v0.2.0 release. Consumers pick based on their own size/quality tradeoff (57 MB FP16 vs 32 MB INT8 per duration).
+
 ## 2026-04-17 — Phase 10 integration: heatmap.js was distorting the visual output all along
 
 Discovered during the Foveacast integration (PR #5 on Foveacast) that the saliency overlays in the browser looked dramatically different from the benchmark renders in foveacast-training. The model output was verified identical (PyTorch ↔ ONNX FP16 at 100% hotspot overlap), and the preprocessing difference (PIL BICUBIC vs JS bilinear) produced only 96.8% overlap — not enough to explain what we were seeing.
