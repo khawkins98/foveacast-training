@@ -37,7 +37,10 @@ import argparse
 import json
 import statistics
 from pathlib import Path
+from typing import Callable
 
+import numpy as np
+import onnxruntime as ort
 import torch
 from torch.utils.data import DataLoader
 
@@ -74,6 +77,43 @@ def load_model(checkpoint_path: Path, device: torch.device) -> MSINet:
     return model.to(device).eval()
 
 
+def make_inferencer(
+    checkpoint_path: Path, device: torch.device
+) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Return a callable `(images_tensor) -> pred_tensor` that dispatches
+    to either PyTorch or ONNX Runtime based on file extension.
+
+    Why auto-detect over a separate `--onnx` flag: the eval pipeline
+    (split loading, metric computation, comparison-table formatting) is
+    identical for both PyTorch and ONNX inference — only the forward
+    pass differs. Unifying at the inferencer boundary keeps the rest
+    of the module oblivious to which backend ran, which is what lets
+    the same `evaluate_checkpoint` function grade stock PyTorch vs
+    FP16 ONNX vs INT8 ONNX side-by-side without branching.
+
+    ONNX inference is always CPU (CPUExecutionProvider) regardless of
+    the `device` argument — the CPU EP has the most complete op
+    coverage and the 108-image eval is fast enough that MPS throughput
+    doesn't matter. Predictions are moved to `device` on return so the
+    downstream metric computations stay on-device.
+    """
+    if checkpoint_path.suffix == ".onnx":
+        sess = ort.InferenceSession(
+            str(checkpoint_path), providers=["CPUExecutionProvider"]
+        )
+
+        def run_onnx(images: torch.Tensor) -> torch.Tensor:
+            x_np = images.detach().cpu().numpy().astype(np.float32)
+            y_np = sess.run(["output"], {"input": x_np})[0]
+            return torch.from_numpy(y_np).to(device)
+
+        return run_onnx
+
+    # .pt / .pth PyTorch checkpoint — load the usual way.
+    model = load_model(checkpoint_path, device)
+    return model
+
+
 def evaluate_checkpoint(
     checkpoint_path: Path,
     split: str,
@@ -106,10 +146,12 @@ def evaluate_checkpoint(
         ("does the 1s model agree with 3s ground truth?") and isn't the
         default.
     """
-    # why: load_model is the shared helper — strict=True catches
-    # state_dict / module-name drift loudly rather than quietly evaluating
-    # 108 images with most layers kept at init.
-    model = load_model(checkpoint_path, device)
+    # why: make_inferencer dispatches to PyTorch or ONNX Runtime based
+    # on file extension, so the rest of this function is backend-agnostic.
+    # For PyTorch .pt files it still goes through load_model + strict=True
+    # so a stale state_dict fails loudly rather than quietly evaluating
+    # 108 images with most layers at init.
+    model = make_inferencer(checkpoint_path, device)
 
     # Two datasets — heatmap target for CC/KLD, fixmap target for NSS,
     # both at the same viewing-duration window. Phase 0 + 3 guarantee
