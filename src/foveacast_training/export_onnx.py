@@ -184,6 +184,7 @@ def validate_parity(
     n_random_trials: int = 3,
     tolerance: float = 1e-4,
     input_shape: tuple[int, int, int, int] = CANONICAL_INPUT_SHAPE,
+    include_saturated: bool = True,
 ) -> dict[str, float]:
     """Run varied inputs through both PyTorch and onnxruntime CPU,
     report max and mean absolute error across all trials.
@@ -193,9 +194,13 @@ def validate_parity(
     2. One batch_size=2 trial — exercises the dynamic batch axis and the
        broadcast paths in `_tf1_bilinear_upsample`'s advanced indexing,
        which might behave differently from a bs=1 trace.
-    3. Saturated edge inputs: all-zero and all-255. Checks the min-max
-       normaliser's `1 / (eps + max)` divisor doesn't diverge between
-       PyTorch and ONNX on the degenerate-input path.
+    3. Saturated edge inputs: all-zero and all-255, gated on
+       `include_saturated`. Checks the min-max normaliser's
+       `1 / (eps + max)` divisor doesn't diverge on the degenerate-input
+       path. Defaults to True for FP16/FP32 (where eps arithmetic is the
+       interesting failure mode); turned off for INT8 where saturated
+       inputs fall outside the calibration distribution and dominate
+       max-error metrics without reflecting realistic use.
 
     A passing gate (all trials within tolerance) means the exported
     artefact faithfully reproduces the PyTorch forward pass across the
@@ -228,12 +233,17 @@ def validate_parity(
     # Trial bank 3: saturated inputs. Stresses the min-max normaliser's
     # divisor — `1 / (eps + max)` at max=0 (all-zero) and max=255 (all-255)
     # are the two most divergent cases arithmetically.
-    for value in (0.0, 255.0):
-        x_sat = np.full(input_shape, value, dtype=np.float32)
-        tm, mm = _parity_trial(pytorch_model, sess, x_sat)
-        max_abs_err = max(max_abs_err, tm)
-        mean_abs_err_sum += mm
-        n_trials += 1
+    if include_saturated:
+        for value in (0.0, 255.0):
+            x_sat = np.full(input_shape, value, dtype=np.float32)
+            tm, mm = _parity_trial(pytorch_model, sess, x_sat)
+            max_abs_err = max(max_abs_err, tm)
+            mean_abs_err_sum += mm
+            n_trials += 1
+
+    trial_kinds = "random@bs=1 + random@bs=2"
+    if include_saturated:
+        trial_kinds += " + saturated(0, 255)@bs=1"
 
     return {
         "max_abs_err": max_abs_err,
@@ -241,7 +251,7 @@ def validate_parity(
         "tolerance": tolerance,
         "within_tolerance": max_abs_err < tolerance,
         "n_trials": n_trials,
-        "trial_kinds": "random@bs=1 + random@bs=2 + saturated(0, 255)@bs=1",
+        "trial_kinds": trial_kinds,
     }
 
 
