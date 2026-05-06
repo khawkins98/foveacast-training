@@ -18,6 +18,7 @@ Useful environment variables:
 
 - `FETCH_SKIP_UNZIP=1` — download only, leave the zip on disk. Handy if you want to archive the raw deposit somewhere before extracting.
 - `FETCH_DEST=/some/path` — extract somewhere other than `data/ueyes/` (useful if your repo lives on a small SSD and the dataset lives on external storage).
+- `UEYES_SHA256=<hex>` — verify the downloaded zip against an expected SHA256 before extraction. Skipped with a one-line note if unset; pin it in CI / release scripts. The script does not ship a baked-in hash because Zenodo's reported checksum should be the source of truth — copy it from the [Zenodo record](https://zenodo.org/records/8010312) when you need verification.
 
 Prerequisites: `curl` and `unzip` on `PATH`. Both ship with macOS and every mainstream Linux.
 

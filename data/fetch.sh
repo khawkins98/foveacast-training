@@ -129,6 +129,37 @@ done
 
 # --- Verify -----------------------------------------------------------------
 
+# why: SHA256 is a stronger guarantee than the CRC32s in the zip's central
+# directory — it detects a swapped-but-still-valid archive, not only
+# truncations or corruption. The expected hash is opt-in: if you have it
+# (from data/README.md or another trusted source), export UEYES_SHA256
+# before running this script and the download is verified against it.
+# If you don't, the step is skipped with a one-line note so the script
+# stays usable for first-time contributors. Pin a known hash in CI /
+# release scripts where reproducibility matters.
+EXPECTED_SHA256="${UEYES_SHA256:-}"
+if [[ -n "${EXPECTED_SHA256}" ]]; then
+  echo "→ Verifying SHA256 of ${ZIP_NAME}"
+  if command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA256="$(shasum -a 256 "${ZIP_NAME}" | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_SHA256="$(sha256sum "${ZIP_NAME}" | awk '{print $1}')"
+  else
+    echo "error: neither shasum nor sha256sum is on PATH; cannot verify hash" >&2
+    exit 1
+  fi
+  if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
+    echo "error: SHA256 mismatch for ${ZIP_NAME}" >&2
+    echo "       expected: ${EXPECTED_SHA256}" >&2
+    echo "       actual:   ${ACTUAL_SHA256}" >&2
+    echo "       refusing to extract — delete the file and rerun, or update UEYES_SHA256." >&2
+    exit 1
+  fi
+  echo "  ✓ SHA256 matches expected value"
+else
+  echo "  (set UEYES_SHA256 to verify the download against a known hash; skipping)"
+fi
+
 echo "→ Verifying archive integrity"
 # why: unzip -t walks the central directory and checks CRCs without
 # extracting. If the file is truncated or corrupt, this fails now rather
